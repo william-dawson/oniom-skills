@@ -17,6 +17,8 @@ Read the PDB file, work through each check below, and present the user with a fi
 
 Work through each item. For items you can resolve automatically, fill in the answer. For ambiguous items, present options and ask the user to pick.
 
+**Important:** The `byres (system within X of ligand)` selection naturally picks up residues from all chains near the ligand. Do not filter by chain. If multiple protein chains appear in the cluster, they are there because they contribute to the binding site (e.g. a dimer interface) — include all of them by default.
+
 ```
 ═══════════════════════════════════════════════════════════
   CLUSTER EXTRACTION — PRE-FLIGHT CHECKLIST
