@@ -32,6 +32,9 @@ Note any HIS residues near the ligand. If the PDB uses generic `HIS` rather than
 **Check for metals**
 If a metal ion is present (Zn, Fe, Cu, Mg, Mn, etc.), identify its coordinating residues. These must be in the cluster regardless of distance cutoff. Flag the metal's likely oxidation state and ask the user to confirm — this affects both charge and spin multiplicity.
 
+**Check for disulfide bonds**
+If CYS residues are in the cluster, check for disulfide bonds by measuring the SG–SG distance between CYS pairs. A distance < 2.5 Å indicates a disulfide bond — these CYS are neutral (charge 0), not CYM (charge −1). Use `cmd.get_distance` on the SG atoms to verify. Also check for CYS residues coordinating metals (SG–metal distance < 3.0 Å), which would make them CYM (−1).
+
 **Check for open-shell character**
 If a metal with unpaired d-electrons or a radical intermediate is present, flag it explicitly and ask for the spin multiplicity before proceeding. Do not assume singlet.
 
