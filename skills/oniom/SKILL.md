@@ -64,6 +64,8 @@ pymol.finish_launching(['pymol', '-c'])
 
 ### Block: Load and select inner region
 
+If the PDB is CHARMM format, insert the "Normalize CHARMM PDB" block from the pymol skill immediately after `cmd.load` and before any selections.
+
 ```python
 # FILL
 PDB_PATH    = 'protein_ligand.pdb'
@@ -71,6 +73,7 @@ LIGAND_RESN = 'LIG'
 CUTOFF      = 5.0  # inner region cutoff in Å
 
 cmd.load(PDB_PATH, 'system')
+# >>> INSERT CHARMM NORMALIZATION HERE IF NEEDED (see pymol skill) <<<
 cmd.select('ligand', f'system and resn {LIGAND_RESN}')
 cmd.select('inner',  f'byres (system within {CUTOFF} of ligand) or ligand')
 ```

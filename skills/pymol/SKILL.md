@@ -13,6 +13,9 @@ Your job is to write a Python script tailored to the user's specific PDB, assemb
 
 Read the PDB file and reason through the following. Engage the user on anything ambiguous.
 
+**Detect CHARMM PDB format**
+CHARMM-GUI PDBs use segment IDs (columns 73–76, e.g. `PROA`, `PROB`, `HETA`) to distinguish chains, but assign them the same chain letter (e.g. both protein chains are `P`). This causes residue number collisions. Check for this and, if detected, use the "Normalize CHARMM PDB" block immediately after loading.
+
 **Identify the ligand**
 Look at HETATM records (excluding HOH/WAT). If more than one non-water HETATM group is present, ask the user which is the ligand of interest.
 
@@ -63,6 +66,37 @@ pymol.finish_launching(['pymol', '-c'])
 
 ```python
 cmd.load('FILL_PDB_PATH', 'system')
+```
+
+### Block: Normalize CHARMM PDB (use when CHARMM format detected)
+
+CHARMM PDBs put multiple segments on the same chain letter, so `chain` alone
+cannot distinguish them. This block detects the collision and remaps segment IDs
+to unique chain letters, so all downstream code using `chain` works correctly.
+
+```python
+# Check if any chain letter has multiple segment IDs
+chain_segs = {}
+cmd.iterate('system and name CA',
+            'chain_segs.setdefault(chain, set()).add(segi)',
+            space={'chain_segs': chain_segs})
+
+if any(len(segs) > 1 for segs in chain_segs.values()):
+    # Collect unique segment IDs in order
+    segi_order = []
+    _seen = set()
+    cmd.iterate('system', 'lst.append(segi) if segi not in _seen else None; _seen.add(segi)',
+                space={'lst': segi_order, '_seen': _seen})
+
+    # Map each segment ID to a unique chain letter
+    chain_pool = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+    segi_to_chain = {s: chain_pool[i] for i, s in enumerate(segi_order)}
+    cmd.alter('system', 'chain = segi_to_chain[segi]', space={'segi_to_chain': segi_to_chain})
+    cmd.sort()  # re-sort after chain reassignment
+
+    print("CHARMM PDB detected — remapped segment IDs to chain letters:")
+    for segi, ch in segi_to_chain.items():
+        print(f"  {segi} → {ch}")
 ```
 
 ### Block: Select inner region
