@@ -11,32 +11,85 @@ Your job is to write a Python script tailored to the user's specific PDB, assemb
 
 ## Before Writing Any Code
 
-Read the PDB file and reason through the following. Engage the user on anything ambiguous.
+Read the PDB file, work through each check below, and present the user with a filled-in summary they can review and edit before you proceed.
 
-**Detect CHARMM PDB format**
-CHARMM-GUI PDBs use segment IDs (columns 73–76, e.g. `PROA`, `PROB`, `HETA`) to distinguish chains, but assign them the same chain letter (e.g. both protein chains are `P`). This causes residue number collisions. Check for this and, if detected, use the "Normalize CHARMM PDB" block immediately after loading.
+### Pre-flight Checklist
 
-**Identify the ligand**
-Look at HETATM records (excluding HOH/WAT). If more than one non-water HETATM group is present, ask the user which is the ligand of interest.
+Work through each item. For items you can resolve automatically, fill in the answer. For ambiguous items, present options and ask the user to pick.
 
-**Assess the ligand charge**
-Look at the ligand's element composition and any CONECT records. Reason about functional groups:
-- Carboxylate → likely −1
-- Ammonium/guanidinium → likely +1
-- Phosphate → likely −2
-- If ambiguous, ask: *"The ligand [RESNAME] looks like [description]. What is its formal charge?"*
+```
+═══════════════════════════════════════════════════════════
+  CLUSTER EXTRACTION — PRE-FLIGHT CHECKLIST
+═══════════════════════════════════════════════════════════
 
-**Check histidines**
-Note any HIS residues near the ligand. If the PDB uses generic `HIS` rather than `HID`/`HIE`/`HIP`, the protonation state is unknown. Ask the user or note it as an assumption.
+  PDB file:     _______________
+  PDB format:   [ ] Standard    [ ] CHARMM (needs segment normalization)
 
-**Check for metals**
-If a metal ion is present (Zn, Fe, Cu, Mg, Mn, etc.), identify its coordinating residues. These must be in the cluster regardless of distance cutoff. Flag the metal's likely oxidation state and ask the user to confirm — this affects both charge and spin multiplicity.
+─── Ligand ────────────────────────────────────────────────
 
-**Check for disulfide bonds**
-If CYS residues are in the cluster, check for disulfide bonds by measuring the SG–SG distance between CYS pairs. A distance < 2.5 Å indicates a disulfide bond — these CYS are neutral (charge 0), not CYM (charge −1). Use `cmd.get_distance` on the SG atoms to verify. Also check for CYS residues coordinating metals (SG–metal distance < 3.0 Å), which would make them CYM (−1).
+  Residue name: _______________
+  Description:  _______________
+  Charge:       ___   (reasoning: _________________________)
 
-**Check for open-shell character**
-If a metal with unpaired d-electrons or a radical intermediate is present, flag it explicitly and ask for the spin multiplicity before proceeding. Do not assume singlet.
+─── Cutoff ────────────────────────────────────────────────
+
+  Distance:     [ ] 5.0 Å (minimal)
+                [ ] 6.0 Å (moderate)
+                [ ] 8.0 Å (large / charged ligand)
+                [ ] ___ Å (custom)
+
+─── Histidines in cluster ─────────────────────────────────
+
+  (list each HIS/HSD/HSE near the ligand and its state)
+
+  Resi ____  Chain ____  State: [ ] HID/HSD (neutral, Nδ-H)
+                                [ ] HIE/HSE (neutral, Nε-H)
+                                [ ] HIP/HSP (protonated, +1)
+  (repeat for each)
+
+─── Cysteines in cluster ──────────────────────────────────
+
+  (check SG–SG distances < 2.5 Å for disulfides,
+   SG–metal distances < 3.0 Å for metal coordination)
+
+  Resi ____  Chain ____  State: [ ] Neutral (free or disulfide)
+                                [ ] CYM (−1, metal-coordinating)
+  (repeat for each)
+
+─── Metals ────────────────────────────────────────────────
+
+  [ ] None found
+  [ ] Metal present:
+      Element: ____  Resi: ____  Oxidation state: ____
+      Coordinating residues: _______________
+      (these will be force-included in the cluster)
+
+─── Spin ──────────────────────────────────────────────────
+
+  [ ] Closed-shell (singlet, multiplicity = 1)
+  [ ] Open-shell:  multiplicity = ___
+      (reasoning: _________________________)
+
+═══════════════════════════════════════════════════════════
+```
+
+### How to fill it in
+
+**PDB format** — Check columns 73–76 for segment IDs (`PROA`, `PROB`, etc.). If multiple segments share a chain letter, it's CHARMM format and needs the normalization block.
+
+**Ligand** — Look at HETATM records (excluding HOH/WAT). If multiple non-water HETATM groups exist, list them and ask the user to pick. Reason about the charge from functional groups:
+- Quaternary ammonium → +1
+- Carboxylate → −1
+- Phosphate → −2
+- If ambiguous, ask.
+
+**Histidines** — If the PDB uses explicit naming (HID/HIE/HIP or HSD/HSE/HSP), fill in directly. If it uses generic HIS, inspect the H-bond network or ask the user.
+
+**Cysteines** — Measure SG–SG distances with `cmd.get_distance`. Below 2.5 Å = disulfide (neutral). Check SG–metal distances too — below 3.0 Å = metal-coordinating (CYM, −1).
+
+**Metals** — Search for common metal elements (Zn, Fe, Cu, Mg, Mn, Co, Ni). If found, identify coordinating residues and ask the user about the oxidation state.
+
+**Spin** — Default to singlet unless a metal with unpaired d-electrons or a radical intermediate is present. If uncertain, ask.
 
 ---
 

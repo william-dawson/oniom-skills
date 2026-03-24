@@ -11,21 +11,61 @@ Your job is to write input files tailored to the user's system, assembled from t
 
 ## Before Writing Any Input
 
-**Confirm charges and multiplicity**
-- Total system charge and inner region charge should be known from the cluster extraction step. Confirm them.
-- Multiplicity: assume singlet (1) only if you are confident the system is closed-shell. If there is a transition metal, reason about its oxidation state and d-electron count. If uncertain, ask: *"Is this system closed-shell? I see [metal/group] which may give a non-singlet ground state."*
+Present the user with this setup form, pre-filled with what you know from the cluster extraction step. Let them review and edit before generating input files.
 
-**Choose the driver**
-Ask the user if they have a preference, otherwise recommend:
+```
+═══════════════════════════════════════════════════════════
+  ONIOM CALCULATION — SETUP
+═══════════════════════════════════════════════════════════
 
-| Scenario | Driver | Method |
-|----------|--------|--------|
-| Fast scan, large system | `xtb` | `gfn2:gfnff` |
-| High-accuracy inner region, ORCA available | `orca` | `r2SCAN-3c` or `wB97X-D3 def2-TZVP` |
-| DFT inner with XTB driving | `xtb` + `orca.inp` | requires `! engrad` in ORCA input |
+─── Charges (from cluster extraction) ─────────────────────
 
-**Choose the inner region cutoff**
-The cutoff defines the high-level region. It can be tighter than the cluster cutoff — for example, the cluster might be 8 Å but the inner region only the ligand + direct contacts at 3.5 Å.
+  Inner region charge:  ___
+  Total system charge:  ___
+
+─── Multiplicity ──────────────────────────────────────────
+
+  [ ] Singlet (1) — closed-shell, no unpaired electrons
+  [ ] Doublet (2)
+  [ ] Triplet (3)
+  [ ] Other: ___
+  (reasoning: _________________________)
+
+─── Driver ────────────────────────────────────────────────
+
+  [ ] XTB (semiempirical ONIOM, fast)
+      High level: [ ] GFN2-xTB   [ ] GFN1-xTB
+      Low level:  [ ] GFN-FF     [ ] GFN1-xTB
+
+  [ ] XTB + ORCA (DFT inner region, XTB drives)
+      ORCA method: _______________  (e.g. r2SCAN-3c)
+      Low level:   [ ] GFN-FF     [ ] GFN2-xTB
+
+  [ ] ORCA native QM/XTB (electrostatic embedding)
+      QM method:   _______________  (e.g. r2SCAN-3c, wB97X-D3 def2-TZVP)
+      Low level:   XTB2 (automatic)
+
+─── Inner region cutoff ───────────────────────────────────
+
+  [ ] Same as cluster cutoff (___ Å)
+  [ ] Tighter: ___ Å (ligand + direct contacts only)
+  [ ] Custom:  ___ Å
+
+═══════════════════════════════════════════════════════════
+```
+
+### How to fill it in
+
+**Charges** — Should be known from the cluster extraction step. Confirm with the user.
+
+**Multiplicity** — Default to singlet only if confident the system is closed-shell. If a transition metal is present, reason about its oxidation state and d-electron count. If uncertain, ask.
+
+**Driver** — Recommend based on the situation:
+- Fast scan or large system → XTB driver, GFN2:GFN-FF
+- High accuracy needed, ORCA available → ORCA native QM/XTB
+- DFT inner but want XTB to handle the ONIOM mechanics → XTB + ORCA
+
+**Inner region cutoff** — Can be the same as the cluster cutoff, or tighter. A tighter cutoff (e.g. 3.5 Å) for the high-level region is common when the cluster cutoff was generous (e.g. 8 Å).
 
 ---
 
