@@ -12,13 +12,6 @@ A Claude Code plugin for setting up QM and QM/MM calculations from protein-ligan
 /reload-plugins
 ```
 
-### Claude Desktop
-
-1. Download `oniom-skills.zip` from the [latest release](https://github.com/william-dawson/oniom-skills/releases/latest)
-2. Open the **Cowork** tab at the top of Claude Desktop
-3. Select **Customize** on the left sidebar
-4. Select **Skills**
-5. Click the **+** button and upload both `.md` files from the zip
 
 ## What it does
 
