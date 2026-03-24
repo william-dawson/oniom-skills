@@ -226,7 +226,8 @@ LIGAND_CHARGE = 0  # FILL
 RESIDUE_CHARGES = {
     'ASP': -1, 'GLU': -1,
     'ARG': +1, 'LYS': +1,
-    'HIS':  0, 'HID':  0, 'HIE':  0, 'HIP': +1,
+    'HIS':  0, 'HID':  0, 'HIE':  0, 'HIP': +1,  # AMBER naming
+    'HSD':  0, 'HSE':  0, 'HSP': +1,              # CHARMM naming
     'CYM': -1,
 }
 
