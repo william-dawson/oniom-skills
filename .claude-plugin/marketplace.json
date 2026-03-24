@@ -1,0 +1,22 @@
+{
+  "name": "oniom-skills",
+  "owner": {
+    "name": "william-dawson"
+  },
+  "metadata": {
+    "description": "Skills for QM cluster model extraction and ONIOM calculation setup from protein-ligand PDB files."
+  },
+  "plugins": [
+    {
+      "name": "pymol",
+      "source": "./",
+      "description": "Extract QM cluster models and set up ONIOM calculations from protein-ligand PDB files. Requires PyMOL, XTB (≥6.6), and optionally ORCA.",
+      "author": {
+        "name": "william-dawson"
+      },
+      "homepage": "https://github.com/william-dawson/oniom-skills",
+      "repository": "https://github.com/william-dawson/oniom-skills",
+      "keywords": ["pymol", "oniom", "xtb", "orca", "qm", "computational-chemistry"]
+    }
+  ]
+}
