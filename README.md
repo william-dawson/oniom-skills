@@ -8,6 +8,7 @@ A Claude Code plugin for setting up QM and QM/MM calculations from protein-ligan
 
 ```
 /plugin marketplace add william-dawson/oniom-skills
+/plugin marketplace update oniom-skills
 /plugin install pymol@oniom-skills
 /reload-plugins
 ```
@@ -34,6 +35,7 @@ The skills are conversational — they inspect your structure, ask about ambiguo
 ```
 /pymol:pymol    # start cluster extraction
 /pymol:oniom    # set up ONIOM calculation
+/pymol:slurm    # generate SLURM submission script
 ```
 
 Both skills write Python scripts using PyMOL's bundled interpreter, discovered automatically at runtime — no hardcoded paths.
