@@ -1,7 +1,7 @@
 {
   "name": "pymol",
   "description": "A skill for using PyMOL (by Schrödinger) to extract QM cluster models from protein-ligand PDB files — select residues around a ligand, apply amide capping, and calculate cluster charge. Requires PyMOL to be installed separately.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": {
     "name": "wddawson"
   }
