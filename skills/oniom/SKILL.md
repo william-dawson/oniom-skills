@@ -11,6 +11,14 @@ Your job is to write input files tailored to the user's system, assembled from t
 
 ## Before Writing Any Input
 
+**First, check that the PDB has been prepared.** If you already ran the pymol skill (`/pymol:pymol`) in this conversation and produced a clean cluster PDB, proceed with the questions below. If not — or if the user is pointing you at a raw PDB that hasn't been through the cluster extraction step — stop and tell them:
+
+> This PDB hasn't been through the cluster extraction step yet. Run `/pymol:pymol` first to normalize CHARMM formatting, fix element columns, identify the ligand, and determine the charge. Then come back here.
+
+Do not attempt to do the cleanup yourself in this skill.
+
+---
+
 Ask each question below **one at a time**, waiting for the user's answer before moving on. You can state your recommendation, but the user must confirm or change it.
 
 ### Question 1 — Charges
@@ -121,7 +129,7 @@ pymol.finish_launching(['pymol', '-c'])
 
 ### Block: Load and select inner region
 
-If the PDB is CHARMM format, insert the "Normalize CHARMM PDB" block from the pymol skill immediately after `cmd.load` and before any selections.
+The PDB should already be clean from the pymol skill step.
 
 ```python
 # FILL
@@ -130,7 +138,6 @@ LIGAND_RESN = 'LIG'
 CUTOFF      = 5.0  # inner region cutoff in Å
 
 cmd.load(PDB_PATH, 'system')
-# >>> INSERT CHARMM NORMALIZATION HERE IF NEEDED (see pymol skill) <<<
 cmd.select('ligand', f'system and resn {LIGAND_RESN}')
 cmd.select('inner',  f'byres (system within {CUTOFF} of ligand) or ligand')
 ```
