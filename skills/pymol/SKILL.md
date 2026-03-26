@@ -81,14 +81,13 @@ Read the PDB and fill in this checklist. For items you can resolve automatically
 
 ## Runtime
 
-**NEVER use `python3` or `python` to run these scripts.** The `pymol` module is only available inside PyMOL's bundled Python. Always use:
+**NEVER use `python3` or `python` to run these scripts.** Always run via PyMOL:
 
 ```bash
-PYMOL_PYTHON=$(head -1 "$(which pymol)" | sed 's/#!//')
-"$PYMOL_PYTHON" your_script.py
+pymol -cq -r your_script.py
 ```
 
-This is the only Python interpreter that will work.
+`-c` = headless (no GUI), `-q` = quiet (no banner). PyMOL handles startup and shutdown — scripts do not need `pymol.finish_launching` or `cmd.quit`.
 
 ---
 
@@ -97,11 +96,8 @@ This is the only Python interpreter that will work.
 ### Block: Boilerplate
 
 ```python
-import pymol
 from pymol import cmd
 import numpy as np
-
-pymol.finish_launching(['pymol', '-c'])
 ```
 
 ### Block: Load structure
@@ -325,16 +321,9 @@ if total_m1 != total_m2:
     print(f"*** WARNING: methods disagree — check protonation states ***")
 ```
 
-### Block: Teardown
-
-```python
-cmd.quit()
-```
-
 ---
 
 ## Notes
-- Always call `cmd.quit()` or the process hangs.
 - `byres` expands distance selections to complete residues.
 - Atom names are case-sensitive: `name CA` not `name ca`.
 - If the PDB already has hydrogens, skip capping and save directly.
