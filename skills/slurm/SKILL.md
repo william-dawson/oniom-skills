@@ -55,16 +55,29 @@ Guidelines:
 - ORCA ONIOM: 12–48 hours
 - Pure XTB: < 1 hour
 
-### Question 4 — Modules or conda
+### Question 4 — Software environment
 
-Do not guess module names — they are cluster-specific.
+Do not guess module names or install paths — they are cluster-specific. XTB and ORCA are often installed manually rather than as modules.
 
 ```
-How is [XTB / ORCA / etc.] installed on your cluster?
+How is [XTB / ORCA / etc.] set up on your cluster?
 
   a) Module system — what's the module name? (e.g. xtb/6.6)
   b) Conda environment — what's the env name?
-  c) Already in $PATH — no setup needed
+  c) Installed at a specific path — what's the path?
+     (I'll add it to $PATH in the script)
+  d) Already in $PATH — no setup needed
+```
+
+If the user gives a path (option c), add it to `$PATH` in the script:
+```bash
+export PATH="/path/to/xtb/bin:$PATH"
+```
+
+For ORCA, also set `$LD_LIBRARY_PATH` if the user provides a path:
+```bash
+export PATH="/path/to/orca:$PATH"
+export LD_LIBRARY_PATH="/path/to/orca:$LD_LIBRARY_PATH"
 ```
 
 ### Question 5 — GPU (only if relevant)
