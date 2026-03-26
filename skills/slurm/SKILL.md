@@ -1,120 +1,87 @@
 ---
 name: slurm
-description: Generate SLURM batch scripts for submitting calculations to HPC clusters. Guides the user through partition, resource, and module selection one question at a time. Use when the user wants to run a calculation on a cluster via SLURM.
+description: Generate SLURM batch scripts for HPC job submission. Ask the user about partition, resources, and software environment one question at a time.
 user-invocable: true
 allowed-tools: Read, Write, Bash, Glob
 ---
 
-# SLURM Batch Script Setup
+# SLURM Script Setup
 
-Your job is to write a SLURM submission script tailored to the user's cluster and calculation. **Ask each question one at a time**, waiting for the user's answer before moving to the next. Do not present all options at once.
+**Ask each question one at a time.** Suggest defaults based on the calculation type, but let the user confirm.
 
 ## Questions
 
-Ask these in order. Suggest a default where you can, but let the user confirm or change it.
+### 1 — Partition
 
-### Question 1 — Partition
-
-This is always cluster-specific. You cannot guess it.
+Cluster-specific — you cannot guess this.
 
 ```
 What partition should the job run on?
-
-(Common names: batch, normal, compute, gpu, short, long.
- If unsure, you can run `sinfo -s` on the cluster to see available partitions.)
+(If unsure, run `sinfo -s` on the cluster.)
 ```
 
-### Question 2 — CPUs and memory
-
-Suggest a default based on the calculation type, then ask:
+### 2 — CPUs and memory
 
 ```
 How many CPUs and how much memory?
-
-For this [XTB ONIOM / ORCA / etc.] calculation I'd suggest:
-  CPUs: ___    Memory: ___ GB
-
-Does that work, or would you like different values?
+I'd suggest: CPUs: ___    Memory: ___ GB
 ```
 
-Guidelines for your suggestion:
-- XTB ONIOM: 4–8 CPUs, ~4 GB
-- ORCA ONIOM: 8–16 CPUs, ~16 GB
-- Pure XTB single-point: 4 CPUs, ~2 GB
+Defaults: XTB → 4 CPUs, 4 GB. ORCA → 8 CPUs, 16 GB.
 
-### Question 3 — Wall time
+### 3 — Wall time
 
 ```
-How much wall time should I request? (HH:MM:SS)
-
-For this calculation I'd suggest: ___
+How much wall time? (HH:MM:SS)
+I'd suggest: ___
 ```
 
-Guidelines:
-- XTB ONIOM: 1–4 hours
-- ORCA ONIOM: 12–48 hours
-- Pure XTB: < 1 hour
+Defaults: XTB → 02:00:00. ORCA → 24:00:00.
 
-### Question 4 — Software environment
+### 4 — Software environment
 
-Do not guess module names or install paths — they are cluster-specific. XTB and ORCA are often installed manually rather than as modules.
+Do not guess module names or paths.
 
 ```
-How is [XTB / ORCA / etc.] set up on your cluster?
+How is [XTB / ORCA] set up on your cluster?
 
-  a) Module system — what's the module name? (e.g. xtb/6.6)
-  b) Conda environment — what's the env name?
-  c) Installed at a specific path — what's the path?
-     (I'll add it to $PATH in the script)
-  d) Already in $PATH — no setup needed
+  a) Module — what's the module name?
+  b) Conda — what's the env name?
+  c) Custom path — what's the install directory?
+  d) Already in $PATH
 ```
 
-If the user gives a path (option c), add it to `$PATH` in the script:
+For (c), add to the script:
 ```bash
-export PATH="/path/to/xtb/bin:$PATH"
-```
-
-For ORCA, also set `$LD_LIBRARY_PATH` if the user provides a path:
-```bash
-export PATH="/path/to/orca:$PATH"
+export PATH="/path/to/bin:$PATH"
+# For ORCA also:
 export LD_LIBRARY_PATH="/path/to/orca:$LD_LIBRARY_PATH"
 ```
 
-### Question 5 — GPU (only if relevant)
+### 5 — GPU (skip unless relevant)
 
-Skip this question unless the calculation could benefit from GPU acceleration or the user mentioned a GPU partition.
-
-```
-Do you need a GPU? If so, what type and how many?
-(e.g. gpu:1, gpu:a100:2)
-```
+Only ask if the user mentioned a GPU partition or the calculation benefits from it.
 
 ### Then generate
 
-After collecting the answers, write the SLURM script using the template below. Use sensible defaults for anything not explicitly asked (1 node, 1 task per node, output to `%j.out`, error to same file, working directory = submission directory).
+Use the template below. Default to 1 node, 1 task, output `%j.out`.
 
-## Script Template
+## Template
 
 ```bash
 #!/bin/bash
-#SBATCH --job-name=FILL_JOB_NAME
+#SBATCH --job-name=FILL
 #SBATCH --output=%j.out
-#SBATCH --partition=FILL_PARTITION
+#SBATCH --partition=FILL
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=FILL_CPUS
-#SBATCH --mem=FILL_MEM
-#SBATCH --time=FILL_WALLTIME
-# SBATCH --gres=FILL_GPU            # uncomment if GPU needed
+#SBATCH --cpus-per-task=FILL
+#SBATCH --mem=FILL
+#SBATCH --time=FILL
 
 # --- Environment ---
-module purge
-module load FILL_MODULES
+FILL_MODULE_OR_PATH_SETUP
 
-# If using conda:
-# source activate FILL_CONDA_ENV
-
-# Set parallelism
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 export MKL_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
@@ -124,9 +91,6 @@ FILL_RUN_COMMAND
 ```
 
 ## Notes
-
-- Always use `$SLURM_CPUS_PER_TASK` for `OMP_NUM_THREADS` rather than hardcoding.
-- ORCA requires `--ntasks-per-node` to match the `%pal nprocs` setting in the ORCA input. If generating both, keep them in sync.
-- XTB reads `OMP_NUM_THREADS` for parallelism. No MPI needed.
-- For ORCA parallel runs, the run command is `orca input.inp` (ORCA handles MPI internally).
-- If the user doesn't know their partition or modules, suggest they run `sinfo -s` (partitions) and `module avail xtb` or `module avail orca` on the cluster.
+- Use `$SLURM_CPUS_PER_TASK` for thread counts, never hardcode.
+- ORCA: keep `--ntasks-per-node` in sync with `%pal nprocs` in the input.
+- XTB: reads `OMP_NUM_THREADS`, no MPI needed.
