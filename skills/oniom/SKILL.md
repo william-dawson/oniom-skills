@@ -100,6 +100,13 @@ XTB places link atoms at cut bonds automatically. **Only cut single bonds.** Use
 
 ## Code Building Blocks
 
+**NEVER use `python3` or `python` to run these scripts.** The `pymol` module only exists in PyMOL's bundled Python:
+
+```bash
+PYMOL_PYTHON=$(head -1 "$(which pymol)" | sed 's/#!//')
+"$PYMOL_PYTHON" your_script.py
+```
+
 ### Block: Boilerplate
 
 ```python

@@ -81,10 +81,14 @@ Read the PDB and fill in this checklist. For items you can resolve automatically
 
 ## Runtime
 
+**NEVER use `python3` or `python` to run these scripts.** The `pymol` module is only available inside PyMOL's bundled Python. Always use:
+
 ```bash
 PYMOL_PYTHON=$(head -1 "$(which pymol)" | sed 's/#!//')
 "$PYMOL_PYTHON" your_script.py
 ```
+
+This is the only Python interpreter that will work.
 
 ---
 
