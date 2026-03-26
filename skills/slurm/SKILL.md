@@ -11,13 +11,13 @@ allowed-tools: Read, Write, Bash, Glob
 
 ## Questions
 
-### 1 — Partition
+### 1 — Partition and account
 
-Cluster-specific — you cannot guess this.
+Both are cluster-specific — you cannot guess them.
 
 ```
-What partition should the job run on?
-(If unsure, run `sinfo -s` on the cluster.)
+What partition and account should the job use?
+(If unsure, run `sinfo -s` for partitions and `sacctmgr show assoc user=$USER` for accounts.)
 ```
 
 ### 2 — CPUs and memory
@@ -73,6 +73,7 @@ Use the template below. Default to 1 node, 1 task, output `%j.out`.
 #SBATCH --job-name=FILL
 #SBATCH --output=%j.out
 #SBATCH --partition=FILL
+#SBATCH --account=FILL
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=FILL
