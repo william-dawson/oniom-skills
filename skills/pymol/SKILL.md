@@ -40,6 +40,14 @@ Work through each item. For items you can resolve automatically, fill in the ans
                 [ ] 8.0 Å (large / charged ligand)
                 [ ] ___ Å (custom)
 
+─── Unusual protonation states ────────────────────────────
+
+  (check for non-standard protonation: ASH = protonated ASP,
+   GLH = protonated GLU, LYN = deprotonated LYS)
+
+  Resi ____  Chain ____  Standard name: ____  Charge: ___
+  (repeat for each)
+
 ─── Histidines in cluster ─────────────────────────────────
 
   (list each HIS/HSD/HSE near the ligand and its state)
@@ -84,6 +92,12 @@ Work through each item. For items you can resolve automatically, fill in the ans
 - Carboxylate → −1
 - Phosphate → −2
 - If ambiguous, ask.
+
+**Unusual protonation states** — Check residue names for non-standard protonation:
+- ASH / ASPP = protonated ASP → charge 0 (not −1)
+- GLH / GLUP = protonated GLU → charge 0 (not −1)
+- LYN = deprotonated LYS → charge 0 (not +1)
+These are rare but important. If present, flag them and confirm with the user.
 
 **Histidines** — If the PDB uses explicit naming (HID/HIE/HIP or HSD/HSE/HSP), fill in directly. If it uses generic HIS, inspect the H-bond network or ask the user.
 
@@ -155,6 +169,77 @@ if any(len(segs) > 1 for segs in chain_segs.values()):
     print("CHARMM PDB detected — remapped segment IDs to chain letters:")
     for segi, ch in segi_to_chain.items():
         print(f"  {segi} → {ch}")
+```
+
+### Block: Fix element column (use when CHARMM format detected)
+
+CHARMM PDBs often have blank or incorrect element columns (columns 77–78). This
+causes PyMOL to misidentify atoms — e.g. a chlorine (`CL1`) may be read as carbon.
+This block fixes element assignments and strips non-physical particles (lone pairs,
+Drude particles).
+
+```python
+# Two-letter elements that could be confused with C, N, O, etc.
+TWO_LETTER_ELEMS = {'CL', 'BR', 'FE', 'ZN', 'MG', 'NA', 'CA', 'CU', 'MN',
+                    'LI', 'NI', 'CO', 'SE', 'MO', 'CR'}
+
+PROTEIN_RESNAMES = {
+    'ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY', 'HIS', 'ILE',
+    'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 'THR', 'TRP', 'TYR', 'VAL',
+    'HSD', 'HSE', 'HSP', 'HID', 'HIE', 'HIP',
+    'ASH', 'GLH', 'LYN', 'ASPP', 'GLUP',
+    'ACE', 'NME', 'NMA',
+}
+
+def _infer_element(atom_name, resn):
+    """Infer element from atom name and residue context."""
+    clean = atom_name.strip().upper()
+
+    # For protein residues: first alpha character is the element
+    if resn.strip().upper() in PROTEIN_RESNAMES:
+        for ch in clean:
+            if ch.isalpha():
+                return ch
+
+    # For ligands/ions: check two-letter elements first
+    for elem in TWO_LETTER_ELEMS:
+        if clean.startswith(elem):
+            return elem[0] + elem[1].lower()
+
+    # Fallback: first alpha character
+    for ch in clean:
+        if ch.isalpha():
+            return ch
+    return 'X'
+
+# Strip lone pairs, Drude particles, and massless sites
+lp_atoms = []
+cmd.iterate('system', 'lp_atoms.append(index) if name.strip().upper().startswith(("LP","DRUDE","MW")) else None',
+            space={'lp_atoms': lp_atoms})
+if lp_atoms:
+    cmd.remove('index ' + '+'.join(str(i) for i in lp_atoms))
+    print(f"Removed {len(lp_atoms)} lone pair / Drude / massless atoms")
+
+# Fix element assignments
+atom_data = []
+cmd.iterate('system', 'atom_data.append((index, name, resn, elem))',
+            space={'atom_data': atom_data})
+
+fixes = {}
+for idx, name, resn, current_elem in atom_data:
+    correct = _infer_element(name, resn)
+    if current_elem.strip().upper() != correct.strip().upper():
+        fixes[idx] = correct
+
+if fixes:
+    cmd.alter('system', 'elem = fixes.get(index, elem)', space={'fixes': fixes})
+    print(f"Fixed element column for {len(fixes)} atoms")
+    # Show a few examples
+    for idx, elem in list(fixes.items())[:5]:
+        info = []
+        cmd.iterate(f'index {idx}', 'info.append((name, resn, elem))', space={'info': info})
+        if info:
+            print(f"  atom {idx}: {info[0][0]} ({info[0][1]}) → {elem}")
 ```
 
 ### Block: Select inner region
@@ -276,9 +361,13 @@ print(f"Wrote {OUTPUT_PDB}")
 
 ### Block: Calculate and report cluster charge
 
+Uses two methods as a sanity check: (1) residue-name lookup table, and
+(2) counting charged atom annotations in the PDB (CHARMM uses names
+like `N1+`, `O1-` for charged atoms). If the two disagree, flag it.
+
 ```python
 # FILL: LIGAND_CHARGE (from user), and override any residue charges
-# that differ from the defaults below (e.g. a protonated ASP)
+# that differ from the defaults below
 LIGAND_CHARGE = 0  # FILL
 
 RESIDUE_CHARGES = {
@@ -286,24 +375,63 @@ RESIDUE_CHARGES = {
     'ARG': +1, 'LYS': +1,
     'HIS':  0, 'HID':  0, 'HIE':  0, 'HIP': +1,  # AMBER naming
     'HSD':  0, 'HSE':  0, 'HSP': +1,              # CHARMM naming
+    'ASH':  0, 'ASPP': 0,                          # protonated ASP (neutral)
+    'GLH':  0, 'GLUP': 0,                          # protonated GLU (neutral)
+    'LYN':  0,                                      # deprotonated LYS (neutral)
     'CYM': -1,
 }
 
+# --- Method 1: residue-name table ---
 resnames = []
 cmd.iterate(
     f'inner and not resn {LIGAND_RESN} and name CA',
     'resnames.append(resn)', space={'resnames': resnames}
 )
-protein_charge = sum(RESIDUE_CHARGES.get(r, 0) for r in resnames)
-total_charge = protein_charge + LIGAND_CHARGE
+protein_charge_m1 = sum(RESIDUE_CHARGES.get(r, 0) for r in resnames)
+total_charge_m1 = protein_charge_m1 + LIGAND_CHARGE
 
-print(f"\nCharge breakdown:")
+# --- Method 2: count charged atom annotations (CHARMM PDBs) ---
+# CHARMM sometimes encodes charges in atom names or element columns
+# e.g. atom name ending in '+' or '-', or element column 'N1+', 'O1-'
+pos_count = 0
+neg_count = 0
+cmd.iterate(
+    'inner',
+    'pos_count += (1 if name.strip().endswith("+") or "+" in elem else 0); '
+    'neg_count += (1 if name.strip().endswith("-") or "-" in elem else 0)',
+    space={'pos_count': pos_count, 'neg_count': neg_count}
+)
+# Note: pos_count/neg_count live in the space dict after iterate
+# Re-read them if needed:
+charge_data = {'pos': 0, 'neg': 0}
+cmd.iterate(
+    'inner',
+    'charge_data["pos"] += (1 if "+" in name.strip() else 0); '
+    'charge_data["neg"] += (1 if "-" in name.strip() else 0)',
+    space={'charge_data': charge_data}
+)
+total_charge_m2 = charge_data['pos'] - charge_data['neg']
+
+print(f"\nCharge — Method 1 (residue names):")
 for r in resnames:
     q = RESIDUE_CHARGES.get(r, 0)
     if q != 0:
         print(f"  {r}: {q:+d}")
 print(f"  Ligand ({LIGAND_RESN}): {LIGAND_CHARGE:+d}")
-print(f"  Total: {total_charge:+d}")
+print(f"  Total: {total_charge_m1:+d}")
+
+print(f"\nCharge — Method 2 (atom annotations):")
+print(f"  Positive atoms (+): {charge_data['pos']}")
+print(f"  Negative atoms (-): {charge_data['neg']}")
+print(f"  Total: {total_charge_m2:+d}")
+
+if total_charge_m1 != total_charge_m2:
+    print(f"\n*** WARNING: charge methods disagree! ***")
+    print(f"  Method 1 = {total_charge_m1:+d},  Method 2 = {total_charge_m2:+d}")
+    print(f"  Check for unusual protonation states (ASH, GLH, LYN) or")
+    print(f"  ligand charge. Method 2 does not include ligand charge.")
+else:
+    print(f"\nCharge methods agree: {total_charge_m1:+d}")
 ```
 
 ### Block: Teardown

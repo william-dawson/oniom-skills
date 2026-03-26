@@ -161,6 +161,9 @@ RESIDUE_CHARGES = {
     'ARG': +1, 'LYS': +1,
     'HIS':  0, 'HID':  0, 'HIE':  0, 'HIP': +1,  # AMBER naming
     'HSD':  0, 'HSE':  0, 'HSP': +1,              # CHARMM naming
+    'ASH':  0, 'ASPP': 0,                          # protonated ASP (neutral)
+    'GLH':  0, 'GLUP': 0,                          # protonated GLU (neutral)
+    'LYN':  0,                                      # deprotonated LYS (neutral)
     'CYM': -1,
 }
 
