@@ -31,25 +31,35 @@ Present the user with this setup form, pre-filled with what you know from the cl
   [ ] Other: ___
   (reasoning: _________________________)
 
-─── Driver ────────────────────────────────────────────────
+─── Method ────────────────────────────────────────────────
 
-  [ ] XTB (semiempirical ONIOM, fast)
-      High level: [ ] GFN2-xTB   [ ] GFN1-xTB
-      Low level:  [ ] GFN-FF     [ ] GFN1-xTB
+  Driver:  ① XTB   ② XTB+ORCA   ③ ORCA native   →  ___
 
-  [ ] XTB + ORCA (DFT inner region, XTB drives)
-      ORCA method: _______________  (e.g. r2SCAN-3c)
-      Low level:   [ ] GFN-FF     [ ] GFN2-xTB
-
-  [ ] ORCA native QM/XTB (electrostatic embedding)
-      QM method:   _______________  (e.g. r2SCAN-3c, wB97X-D3 def2-TZVP)
-      Low level:   XTB2 (automatic)
+  ┌─────────────────────────────────────────────────────┐
+  │  ① XTB (fast semiempirical)                        │
+  │     High: GFN2-xTB    Low: GFN-FF                  │
+  │                                                     │
+  │  ② XTB + ORCA (DFT inner, XTB drives)              │
+  │     High: _______________ (e.g. r2SCAN-3c)         │
+  │     Low:  GFN-FF                                    │
+  │                                                     │
+  │  ③ ORCA native QM/XTB (electrostatic embedding)    │
+  │     QM:   _______________ (e.g. wB97X-D3 def2-TZVP)│
+  │     Low:  XTB2 (automatic)                          │
+  └─────────────────────────────────────────────────────┘
 
 ─── Inner region cutoff ───────────────────────────────────
 
-  [ ] Same as cluster cutoff (___ Å)
-  [ ] Tighter: ___ Å (ligand + direct contacts only)
-  [ ] Custom:  ___ Å
+  Cutoff: _______ Å
+
+  (guide: 3.5 Å = ligand + immediate contacts
+          4.5 Å = compact active site
+          5.0 Å = standard active site)
+
+─── Execution ─────────────────────────────────────────────
+
+  [ ] Run locally (generates run.sh)
+  [ ] Submit via SLURM (use /pymol:slurm to configure)
 
 ═══════════════════════════════════════════════════════════
 ```
@@ -300,3 +310,16 @@ Remind the user to:
 1. Check the inner/outer boundary does not cut any double or aromatic bond — use `xtb ... --cut` to inspect.
 2. Confirm multiplicity if any metal or radical is present.
 3. For ORCA driver: confirm `! engrad` is present if using ORCA inside XTB driver mode.
+
+## Running the Calculation
+
+After generating the input files, ask the user how they want to run:
+
+```
+─── Execution ─────────────────────────────────────────────
+
+  [ ] Run locally (just use the generated run.sh)
+  [ ] Submit to a SLURM cluster
+```
+
+If they choose SLURM, use the **slurm** skill (`/pymol:slurm`) to walk them through partition, resources, and modules, then generate a batch script that calls `./run.sh` (or the appropriate run command) from the output directory.
