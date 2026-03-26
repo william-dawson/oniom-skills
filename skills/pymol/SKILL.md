@@ -75,7 +75,7 @@ Read the PDB and fill in this checklist. For items you can resolve automatically
 
 **Cysteines** — Measure SG–SG distances with `cmd.get_distance`. Also check SG–metal distances for metal coordination.
 
-**Metals** — Search for Zn, Fe, Cu, Mg, Mn, Co, Ni. Force-include coordinating residues regardless of cutoff.
+**Metals** — Search for Zn, Fe, Cu, Mg, Mn, Co, Ni. A system may have multiple metal sites — only the ones that fall within the cutoff of the ligand belong in the cluster. For metals that ARE in the cluster, also force-include their coordinating residues (typically HIS, CYS, MET — check metal–N/S distances < 3.0 Å) even if those residues are outside the cutoff. Do NOT force-include metals that are far from the ligand.
 
 ---
 
@@ -188,9 +188,40 @@ CUTOFF = 4.5
 
 cmd.select('ligand', f'system and resn {LIGAND_RESN}')
 cmd.select('inner', f'byres (system within {CUTOFF} of ligand) or ligand')
+```
 
-# Force-include metal-coordinating residues if needed:
-# cmd.select('inner', 'inner or (system and resn ZN)')
+### Block: Include coordinating residues for metals in the cluster
+
+Only metals already inside the cutoff selection get their coordination shells
+added. Metals far from the ligand are left out entirely.
+
+```python
+# Find metals that landed in the inner selection
+METAL_ELEMS = {'ZN', 'FE', 'CU', 'MG', 'MN', 'NI', 'CO', 'MO', 'CR'}
+metals_in_inner = []
+cmd.iterate('inner',
+            'metals_in_inner.append((index, chain, resi, resn, elem)) '
+            'if elem.strip().upper() in METAL_ELEMS else None',
+            space={'metals_in_inner': metals_in_inner, 'METAL_ELEMS': METAL_ELEMS})
+
+if metals_in_inner:
+    print(f"Metals in cluster: {len(metals_in_inner)}")
+    for idx, chain, resi, resn, elem in metals_in_inner:
+        print(f"  {elem} ({resn}) chain {chain} resi {resi}")
+        # Add residues coordinating this metal (N, O, S within 3.0 Å)
+        cmd.select('_coord',
+                    f'byres ((elem N+O+S) and system within 3.0 of (index {idx}))')
+        cmd.select('inner', 'inner or _coord')
+    cmd.delete('_coord')
+    print(f"After adding coordination shells: {cmd.count_atoms('inner')} atoms")
+else:
+    # Check if there are metals in the system but outside the cluster
+    all_metals = []
+    cmd.iterate('system',
+                'all_metals.append(elem) if elem.strip().upper() in METAL_ELEMS else None',
+                space={'all_metals': all_metals, 'METAL_ELEMS': METAL_ELEMS})
+    if all_metals:
+        print(f"Note: {len(all_metals)} metal(s) in system but none within {CUTOFF} Å of ligand — excluded from cluster")
 ```
 
 ### Block: Collect residue info

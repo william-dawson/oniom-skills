@@ -10,7 +10,7 @@
     {
       "name": "pymol",
       "source": "./",
-      "version": "0.5.1",
+      "version": "0.5.2",
       "description": "Extract QM cluster models and set up ONIOM calculations from protein-ligand PDB files. Requires PyMOL, XTB (≥6.6), and optionally ORCA.",
       "author": {
         "name": "william-dawson"
