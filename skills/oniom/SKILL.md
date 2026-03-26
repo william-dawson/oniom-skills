@@ -43,22 +43,18 @@ Is that correct?
 ### 3 — Method
 
 ```
-Which approach?
+Which ONIOM method?
 
   ① XTB built-in ONIOM (fast, single command)
      GFN2-xTB (inner) / GFN-FF (outer)
 
-  ② 3-point manual (three separate calculations)
-     You pick the high and low methods independently.
-     Generates three run scripts — can use different programs.
-
-  ③ ORCA native QM/XTB (electrostatic embedding)
-     You specify the QM method (e.g. wB97X-D3 def2-TZVP)
+  ② ORCA native QM/XTB (electrostatic embedding)
+     You specify the QM method (e.g. r2SCAN-3c, wB97X-D3 def2-TZVP)
 
 I'd recommend ① for a first look. Which do you prefer?
 ```
 
-If ② or ③, follow up asking which high-level method (GFN2, r2SCAN-3c, wB97X-D3, etc.).
+If ②, follow up asking which DFT method.
 
 ### 4 — Inner region cutoff
 
@@ -72,7 +68,22 @@ How large should the inner (high-level) region be?
 What cutoff would you like?
 ```
 
-### 5 — Execution
+### 5 — Binding energy (3-point calculation)
+
+```
+Do you want a binding energy calculation?
+
+  a) No — just a single-point energy of the complex
+  b) Yes — compute ΔE_bind = E(complex) − E(protein) − E(ligand)
+     (generates three calculations using the same ONIOM setup)
+```
+
+If (b), three inputs are generated using the same method and inner region definition:
+- **Complex**: protein + ligand (the full system)
+- **Protein**: ligand removed
+- **Ligand**: ligand alone (no ONIOM needed — just a single-point)
+
+### 6 — Execution
 
 ```
 How do you want to run this?
@@ -230,104 +241,101 @@ with open(f'{OUTDIR}/xcontrol', 'w') as f:
 
 ---
 
-### Option ② — 3-Point Manual ONIOM Blocks
+### 3-Point Binding Energy Blocks
 
-Three separate calculations, combined as: `E_oniom = E(whole,low) − E(inner,low) + E(inner,high)`.
+Use when the user selects binding energy in Question 5. Generates three ONIOM calculations using the **same method and inner region definition**:
 
-This uses the **capped cluster PDB** from the pymol skill as the inner region. The cluster already has link atoms (capping H) placed at backbone cuts.
+- **Complex**: protein + ligand (the full system as-is)
+- **Protein**: ligand removed from the system
+- **Ligand**: ligand alone (no ONIOM — just a single-point)
 
-#### Save geometries
+`ΔE_bind = E(complex) − E(protein) − E(ligand)`
 
-```python
-OUTDIR      = 'oniom_3pt'    # FILL
-CLUSTER_PDB = 'cluster.pdb'  # FILL: capped cluster from pymol skill
-
-os.makedirs(OUTDIR, exist_ok=True)
-
-# Full system XYZ
-cmd.save(f'{OUTDIR}/whole.xyz', 'system')
-
-# Inner region XYZ (load the capped cluster, save as XYZ)
-cmd.load(CLUSTER_PDB, 'cluster')
-cmd.save(f'{OUTDIR}/inner.xyz', 'cluster')
-cmd.delete('cluster')
-```
-
-#### Generate three run scripts
+#### Prepare three geometries
 
 ```python
 # FILL
-HIGH_METHOD = 'gfn2'    # e.g. 'gfn2', or 'orca' for DFT
-LOW_METHOD  = 'gfnff'
-MULTIPLICITY = 1
+OUTDIR      = 'binding_energy'
+LIGAND_RESN = 'LIG'
+LIGAND_CHARGE = 0  # FILL
 
-# --- Run 1: E(whole, low) ---
-with open(f'{OUTDIR}/run_whole_low.sh', 'w') as f:
-    f.write('#!/bin/sh\n')
-    f.write(f'# Point 1: whole system at {LOW_METHOD.upper()}\n')
-    f.write('cd "$(dirname "$0")"\n')
-    f.write(f'xtb whole.xyz --{LOW_METHOD} --chrg {total_charge} > whole_low.out 2>&1\n')
-    f.write('grep "TOTAL ENERGY" whole_low.out\n')
-os.chmod(f'{OUTDIR}/run_whole_low.sh', 0o755)
+os.makedirs(OUTDIR, exist_ok=True)
 
-# --- Run 2: E(inner, low) ---
-with open(f'{OUTDIR}/run_inner_low.sh', 'w') as f:
-    f.write('#!/bin/sh\n')
-    f.write(f'# Point 2: inner region at {LOW_METHOD.upper()}\n')
-    f.write('cd "$(dirname "$0")"\n')
-    f.write(f'xtb inner.xyz --{LOW_METHOD} --chrg {inner_charge} > inner_low.out 2>&1\n')
-    f.write('grep "TOTAL ENERGY" inner_low.out\n')
-os.chmod(f'{OUTDIR}/run_inner_low.sh', 0o755)
+# 1. Complex (full system)
+cmd.save(f'{OUTDIR}/complex.xyz', 'system')
 
-# --- Run 3: E(inner, high) ---
-if HIGH_METHOD.startswith('gfn') or HIGH_METHOD == 'gfnff':
-    # XTB high level
-    with open(f'{OUTDIR}/run_inner_high.sh', 'w') as f:
+# 2. Protein (ligand removed)
+cmd.save(f'{OUTDIR}/protein.xyz', f'system and not resn {LIGAND_RESN}')
+
+# 3. Ligand alone
+cmd.save(f'{OUTDIR}/ligand.xyz', f'system and resn {LIGAND_RESN}')
+```
+
+#### Recompute inner indices for complex and protein
+
+The complex uses the same inner region as before. For the protein-only system, the inner region indices shift because the ligand atoms are gone — recompute them.
+
+```python
+# Complex inner indices (already computed above)
+# inner_xtb / inner_orca are still valid for the complex
+
+# Protein inner indices — ligand atoms removed, so indices shift
+prot_atoms = []
+cmd.iterate(f'system and not resn {LIGAND_RESN}',
+            'prot_atoms.append(index)', space={'prot_atoms': prot_atoms})
+prot_inner_pymol = inner_pymol - set()  # same inner set
+# But remove ligand atoms from inner
+lig_indices = set()
+cmd.iterate(f'system and resn {LIGAND_RESN}',
+            'lig_indices.add(index)', space={'lig_indices': lig_indices})
+prot_inner_pymol = inner_pymol - lig_indices
+
+# Map to 1-based XYZ positions in the protein-only file
+prot_inner_xtb = [i + 1 for i, idx in enumerate(prot_atoms)
+                  if idx in prot_inner_pymol]
+prot_inner_range = fmt_xtb(prot_inner_xtb) if prot_inner_xtb else ''
+
+# Protein charge (no ligand)
+protein_charge = total_charge - LIGAND_CHARGE
+prot_inner_charge = inner_charge - LIGAND_CHARGE
+```
+
+#### Write run scripts (XTB example — adapt for ORCA)
+
+```python
+# Uses the same HIGH, LOW from the method selection
+for label, xyz, chrg, inner_chrg, ir in [
+    ('complex', 'complex.xyz', total_charge, inner_charge, inner_range),
+    ('protein', 'protein.xyz', protein_charge, prot_inner_charge, prot_inner_range),
+]:
+    xtb_cmd = (f'xtb {xyz} --oniom {HIGH}:{LOW} {ir} '
+               f'--chrg {inner_chrg}:{chrg}')
+    with open(f'{OUTDIR}/run_{label}.sh', 'w') as f:
         f.write('#!/bin/sh\n')
-        f.write(f'# Point 3: inner region at {HIGH_METHOD.upper()}\n')
+        f.write(f'# {label}: {HIGH.upper()} / {LOW.upper()}\n')
         f.write('cd "$(dirname "$0")"\n')
-        f.write(f'xtb inner.xyz --{HIGH_METHOD} --chrg {inner_charge} > inner_high.out 2>&1\n')
-        f.write('grep "TOTAL ENERGY" inner_high.out\n')
-    os.chmod(f'{OUTDIR}/run_inner_high.sh', 0o755)
-else:
-    # ORCA high level — generate .inp file
-    with open(f'{OUTDIR}/inner.xyz') as xf:
-        coord_lines = xf.readlines()[2:]
-    with open(f'{OUTDIR}/inner_high.inp', 'w') as f:
-        f.write(f'! {HIGH_METHOD}\n\n')
-        f.write(f'* XYZ {inner_charge} {MULTIPLICITY}\n')
-        f.writelines(coord_lines)
-        f.write('*\n')
-    with open(f'{OUTDIR}/run_inner_high.sh', 'w') as f:
-        f.write('#!/bin/sh\n')
-        f.write(f'# Point 3: inner region at {HIGH_METHOD} (ORCA)\n')
-        f.write('cd "$(dirname "$0")"\n')
-        f.write('orca inner_high.inp > inner_high.out 2>&1\n')
-    os.chmod(f'{OUTDIR}/run_inner_high.sh', 0o755)
+        f.write(f'{xtb_cmd} > {label}.out 2>&1\n')
+        f.write(f'grep "TOTAL ENERGY" {label}.out\n')
+    os.chmod(f'{OUTDIR}/run_{label}.sh', 0o755)
+
+# Ligand — no ONIOM, just a single-point
+with open(f'{OUTDIR}/run_ligand.sh', 'w') as f:
+    f.write('#!/bin/sh\n')
+    f.write(f'# ligand alone at {HIGH.upper()}\n')
+    f.write('cd "$(dirname "$0")"\n')
+    f.write(f'xtb ligand.xyz --{HIGH} --chrg {LIGAND_CHARGE} > ligand.out 2>&1\n')
+    f.write('grep "TOTAL ENERGY" ligand.out\n')
+os.chmod(f'{OUTDIR}/run_ligand.sh', 0o755)
 
 print(f"Wrote 3 run scripts in {OUTDIR}/")
+print("After running, compute: ΔE_bind = E(complex) − E(protein) − E(ligand)")
 ```
 
-#### Run all three and combine
-
-```bash
-cd oniom_3pt
-./run_whole_low.sh
-./run_inner_low.sh
-./run_inner_high.sh
-```
-
-After all three finish, extract the `TOTAL ENERGY` from each `.out` file:
-
-```
-E_oniom = E(whole,low) − E(inner,low) + E(inner,high)
-```
-
-The LLM should parse the output files, extract the energies, and compute `E_oniom` for the user.
+The LLM should parse the output files after the runs complete and report `ΔE_bind`.
 
 ---
 
-### Option ③ — ORCA Native QM/XTB Blocks
+### Option ② — ORCA Native QM/XTB Blocks
 
 Indices are **0-based**. Coordinates embedded in the input file. Low level is always XTB2.
 
