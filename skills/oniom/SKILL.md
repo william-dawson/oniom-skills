@@ -7,75 +7,82 @@ allowed-tools: Read, Write, Bash, Glob
 
 # ONIOM Setup (XTB or ORCA backends)
 
-Your job is to write input files tailored to the user's system, assembled from the building blocks below. Reason through the chemistry first — do not silently fill in defaults.
+Your job is to write input files tailored to the user's system, assembled from the building blocks below. **Walk the user through each decision one question at a time.** Do not dump all options at once or fill in defaults silently.
 
 ## Before Writing Any Input
 
-Present the user with this setup form, pre-filled with what you know from the cluster extraction step. Let them review and edit before generating input files.
+Ask each question below **one at a time**, waiting for the user's answer before moving on. You can state your recommendation, but the user must confirm or change it.
+
+### Question 1 — Charges
+
+Confirm the charges from the cluster extraction step:
 
 ```
-═══════════════════════════════════════════════════════════
-  ONIOM CALCULATION — SETUP
-═══════════════════════════════════════════════════════════
-
-─── Charges (from cluster extraction) ─────────────────────
-
+From the cluster extraction:
   Inner region charge:  ___
   Total system charge:  ___
 
-─── Multiplicity ──────────────────────────────────────────
-
-  [ ] Singlet (1) — closed-shell, no unpaired electrons
-  [ ] Doublet (2)
-  [ ] Triplet (3)
-  [ ] Other: ___
-  (reasoning: _________________________)
-
-─── Method ────────────────────────────────────────────────
-
-  Driver:  ① XTB   ② XTB+ORCA   ③ ORCA native   →  ___
-
-  ┌─────────────────────────────────────────────────────┐
-  │  ① XTB (fast semiempirical)                        │
-  │     High: GFN2-xTB    Low: GFN-FF                  │
-  │                                                     │
-  │  ② XTB + ORCA (DFT inner, XTB drives)              │
-  │     High: _______________ (e.g. r2SCAN-3c)         │
-  │     Low:  GFN-FF                                    │
-  │                                                     │
-  │  ③ ORCA native QM/XTB (electrostatic embedding)    │
-  │     QM:   _______________ (e.g. wB97X-D3 def2-TZVP)│
-  │     Low:  XTB2 (automatic)                          │
-  └─────────────────────────────────────────────────────┘
-
-─── Inner region cutoff ───────────────────────────────────
-
-  Cutoff: _______ Å
-
-  (guide: 3.5 Å = ligand + immediate contacts
-          4.5 Å = compact active site
-          5.0 Å = standard active site)
-
-─── Execution ─────────────────────────────────────────────
-
-  [ ] Run locally (generates run.sh)
-  [ ] Submit via SLURM (use /pymol:slurm to configure)
-
-═══════════════════════════════════════════════════════════
+Does this look right?
 ```
 
-### How to fill it in
+### Question 2 — Multiplicity
 
-**Charges** — Should be known from the cluster extraction step. Confirm with the user.
+If the system is clearly closed-shell (no metals, no radicals), state that and confirm. If there is any ambiguity, explain your reasoning and ask.
 
-**Multiplicity** — Default to singlet only if confident the system is closed-shell. If a transition metal is present, reason about its oxidation state and d-electron count. If uncertain, ask.
+```
+This system appears closed-shell → multiplicity = 1 (singlet).
+Is that correct?
+```
 
-**Driver** — Recommend based on the situation:
-- Fast scan or large system → XTB driver, GFN2:GFN-FF
-- High accuracy needed, ORCA available → ORCA native QM/XTB
-- DFT inner but want XTB to handle the ONIOM mechanics → XTB + ORCA
+### Question 3 — Method
 
-**Inner region cutoff** — Can be the same as the cluster cutoff, or tighter. A tighter cutoff (e.g. 3.5 Å) for the high-level region is common when the cluster cutoff was generous (e.g. 8 Å).
+Present the options and your recommendation:
+
+```
+Which method combination?
+
+  ① XTB only (fast)
+     GFN2-xTB (inner) / GFN-FF (outer)
+
+  ② XTB + ORCA (DFT inner region, XTB drives)
+     You specify the ORCA method (e.g. r2SCAN-3c)
+
+  ③ ORCA native QM/XTB (electrostatic embedding)
+     You specify the QM method (e.g. wB97X-D3 def2-TZVP)
+
+I'd recommend ① for a fast first look. Which do you prefer?
+```
+
+If they pick ② or ③, follow up asking which DFT method they want.
+
+### Question 4 — Inner region cutoff
+
+Ask the user to pick a distance:
+
+```
+How large should the inner (high-level) region be?
+
+  3.5 Å — ligand + immediate contacts
+  4.5 Å — compact active site
+  5.0 Å — standard active site
+
+What cutoff would you like?
+```
+
+### Question 5 — Execution
+
+```
+How do you want to run this?
+
+  a) Locally (I'll generate a run.sh script)
+  b) On a SLURM cluster (I'll help you set up a batch script)
+```
+
+If they pick (b), use the **slurm** skill (`/pymol:slurm`) to walk through the cluster details.
+
+### Then generate
+
+Only after all five questions are answered, assemble the script from the building blocks below.
 
 ---
 

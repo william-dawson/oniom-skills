@@ -1,78 +1,94 @@
 ---
 name: slurm
-description: Generate SLURM batch scripts for submitting calculations to HPC clusters. Guides the user through partition, resource, and module selection. Use when the user wants to run a calculation on a cluster via SLURM.
+description: Generate SLURM batch scripts for submitting calculations to HPC clusters. Guides the user through partition, resource, and module selection one question at a time. Use when the user wants to run a calculation on a cluster via SLURM.
 user-invocable: true
 allowed-tools: Read, Write, Bash, Glob
 ---
 
 # SLURM Batch Script Setup
 
-Your job is to write a SLURM submission script tailored to the user's cluster and calculation. Present the setup form below, fill in what you can, and ask the user for the rest.
+Your job is to write a SLURM submission script tailored to the user's cluster and calculation. **Ask each question one at a time**, waiting for the user's answer before moving to the next. Do not present all options at once.
 
-## Setup Form
+## Questions
+
+Ask these in order. Suggest a default where you can, but let the user confirm or change it.
+
+### Question 1 — Partition
+
+This is always cluster-specific. You cannot guess it.
 
 ```
-═══════════════════════════════════════════════════════════
-  SLURM SUBMISSION — SETUP
-═══════════════════════════════════════════════════════════
+What partition should the job run on?
 
-─── Job identity ──────────────────────────────────────────
-
-  Job name:       _______________
-  Output file:    [ ] %j.out (default)    [ ] _______________
-  Error file:     [ ] same as output      [ ] _______________
-
-─── Resources ─────────────────────────────────────────────
-
-  Partition:      _______________  (ask user — cluster-specific)
-  Nodes:          [ ] 1           [ ] ___
-  Tasks per node: [ ] 1           [ ] ___
-  CPUs per task:  [ ] 1           [ ] ___
-  Memory:         [ ] default     [ ] ___ GB
-  GPU:            [ ] none        [ ] ___ (e.g. gpu:1, gpu:a100:2)
-  Wall time:      ___:___:___     (HH:MM:SS)
-
-─── Environment ───────────────────────────────────────────
-
-  Modules:        _______________  (e.g. xtb/6.6, orca/5.0)
-  Conda env:      [ ] none        [ ] _______________
-  Extra env vars: _______________
-
-─── Execution ─────────────────────────────────────────────
-
-  Working dir:    [ ] submission directory  [ ] _______________
-  Run command:    _______________
-
-═══════════════════════════════════════════════════════════
+(Common names: batch, normal, compute, gpu, short, long.
+ If unsure, you can run `sinfo -s` on the cluster to see available partitions.)
 ```
 
-### How to fill it in
+### Question 2 — CPUs and memory
 
-**Partition** — This is always cluster-specific. Ask the user. Common names: `batch`, `normal`, `compute`, `gpu`, `short`, `long`.
+Suggest a default based on the calculation type, then ask:
 
-**Resources** — Sensible defaults depend on the calculation:
-- XTB ONIOM: 1 node, 1 task, 4–8 CPUs, ~4 GB, no GPU, 1–4 hours
-- ORCA ONIOM: 1 node, 1 task, 8–16 CPUs, ~16 GB, no GPU, 12–48 hours
-- Pure XTB single-point: 1 node, 1 task, 4 CPUs, ~2 GB, no GPU, < 1 hour
+```
+How many CPUs and how much memory?
 
-Suggest defaults based on the calculation but always let the user override.
+For this [XTB ONIOM / ORCA / etc.] calculation I'd suggest:
+  CPUs: ___    Memory: ___ GB
 
-**Modules** — Ask the user what module system their cluster uses and what the module names are. Do not guess module names — they are cluster-specific.
+Does that work, or would you like different values?
+```
 
-**Conda env** — If the user installed XTB or other tools via conda, ask for the environment name.
+Guidelines for your suggestion:
+- XTB ONIOM: 4–8 CPUs, ~4 GB
+- ORCA ONIOM: 8–16 CPUs, ~16 GB
+- Pure XTB single-point: 4 CPUs, ~2 GB
 
-**Run command** — This comes from the calculation setup (e.g. `./run.sh` from the oniom skill, or a direct `xtb` / `orca` command).
+### Question 3 — Wall time
+
+```
+How much wall time should I request? (HH:MM:SS)
+
+For this calculation I'd suggest: ___
+```
+
+Guidelines:
+- XTB ONIOM: 1–4 hours
+- ORCA ONIOM: 12–48 hours
+- Pure XTB: < 1 hour
+
+### Question 4 — Modules or conda
+
+Do not guess module names — they are cluster-specific.
+
+```
+How is [XTB / ORCA / etc.] installed on your cluster?
+
+  a) Module system — what's the module name? (e.g. xtb/6.6)
+  b) Conda environment — what's the env name?
+  c) Already in $PATH — no setup needed
+```
+
+### Question 5 — GPU (only if relevant)
+
+Skip this question unless the calculation could benefit from GPU acceleration or the user mentioned a GPU partition.
+
+```
+Do you need a GPU? If so, what type and how many?
+(e.g. gpu:1, gpu:a100:2)
+```
+
+### Then generate
+
+After collecting the answers, write the SLURM script using the template below. Use sensible defaults for anything not explicitly asked (1 node, 1 task per node, output to `%j.out`, error to same file, working directory = submission directory).
 
 ## Script Template
 
 ```bash
 #!/bin/bash
 #SBATCH --job-name=FILL_JOB_NAME
-#SBATCH --output=FILL_OUTPUT
-#SBATCH --error=FILL_ERROR
+#SBATCH --output=%j.out
 #SBATCH --partition=FILL_PARTITION
-#SBATCH --nodes=FILL_NODES
-#SBATCH --ntasks-per-node=FILL_NTASKS
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=FILL_CPUS
 #SBATCH --mem=FILL_MEM
 #SBATCH --time=FILL_WALLTIME
@@ -96,8 +112,8 @@ FILL_RUN_COMMAND
 
 ## Notes
 
-- Always use `$SLURM_CPUS_PER_TASK` for `OMP_NUM_THREADS` rather than hardcoding — this ensures the thread count matches what SLURM allocated.
+- Always use `$SLURM_CPUS_PER_TASK` for `OMP_NUM_THREADS` rather than hardcoding.
 - ORCA requires `--ntasks-per-node` to match the `%pal nprocs` setting in the ORCA input. If generating both, keep them in sync.
 - XTB reads `OMP_NUM_THREADS` for parallelism. No MPI needed.
-- For ORCA parallel runs, the run command is `orca input.inp` (ORCA handles MPI internally via its own `orca` wrapper).
+- For ORCA parallel runs, the run command is `orca input.inp` (ORCA handles MPI internally).
 - If the user doesn't know their partition or modules, suggest they run `sinfo -s` (partitions) and `module avail xtb` or `module avail orca` on the cluster.
