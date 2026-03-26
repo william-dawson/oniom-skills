@@ -7,17 +7,13 @@ allowed-tools: Read, Write, Bash, Glob
 
 # Cluster Model Extraction
 
-Your job is to write a Python script tailored to the user's specific PDB, assembled from the building blocks below. Do not use a one-size-fits-all script — inspect the structure first, ask questions, then compose only what is needed.
+Write a Python script tailored to the user's PDB, assembled from the building blocks below. Inspect the structure first, ask questions, then compose only what is needed.
 
-## Before Writing Any Code
+## Pre-flight Checklist
 
-Read the PDB file, work through each check below, and present the user with a filled-in summary they can review and edit before you proceed.
+Read the PDB and fill in this checklist. For items you can resolve automatically, fill in the answer. For ambiguous items, ask the user.
 
-### Pre-flight Checklist
-
-Work through each item. For items you can resolve automatically, fill in the answer. For ambiguous items, present options and ask the user to pick.
-
-**Important:** The `byres (system within X of ligand)` selection naturally picks up residues from all chains near the ligand. Do not filter by chain. If multiple protein chains appear in the cluster, they are there because they contribute to the binding site (e.g. a dimer interface) — include all of them by default.
+**Important:** `byres (system within X of ligand)` naturally selects from all chains. Do not filter by chain — multiple chains means a dimer interface, include them all.
 
 ```
 ═══════════════════════════════════════════════════════════
@@ -25,7 +21,7 @@ Work through each item. For items you can resolve automatically, fill in the ans
 ═══════════════════════════════════════════════════════════
 
   PDB file:     _______________
-  PDB format:   [ ] Standard    [ ] CHARMM (needs segment normalization)
+  PDB format:   [ ] Standard    [ ] CHARMM (needs normalization)
 
 ─── Ligand ────────────────────────────────────────────────
 
@@ -35,83 +31,55 @@ Work through each item. For items you can resolve automatically, fill in the ans
 
 ─── Cutoff ────────────────────────────────────────────────
 
-  Distance:     [ ] 5.0 Å (minimal)
-                [ ] 6.0 Å (moderate)
-                [ ] 8.0 Å (large / charged ligand)
+  Distance:     [ ] 3.5 Å (ligand + immediate contacts)
+                [ ] 4.5 Å (compact active site — recommended)
+                [ ] 5.0 Å (standard active site)
                 [ ] ___ Å (custom)
 
-─── Unusual protonation states ────────────────────────────
+─── Protonation states ────────────────────────────────────
 
-  (check for non-standard protonation: ASH = protonated ASP,
-   GLH = protonated GLU, LYN = deprotonated LYS)
+  Histidines near ligand:
+    Resi ____  Chain ____  [ ] HID/HSD (Nδ-H, 0)
+                           [ ] HIE/HSE (Nε-H, 0)
+                           [ ] HIP/HSP (+1)
 
-  Resi ____  Chain ____  Standard name: ____  Charge: ___
-  (repeat for each)
+  Non-standard protonation (if any):
+    Resi ____  Chain ____  Name: ____  Charge: ___
+    (ASH/ASPP = protonated ASP → 0;  GLH/GLUP = protonated GLU → 0;
+     LYN = deprotonated LYS → 0)
 
-─── Histidines in cluster ─────────────────────────────────
+─── Cysteines ─────────────────────────────────────────────
 
-  (list each HIS/HSD/HSE near the ligand and its state)
+  (SG–SG < 2.5 Å = disulfide, neutral;
+   SG–metal < 3.0 Å = CYM, −1)
 
-  Resi ____  Chain ____  State: [ ] HID/HSD (neutral, Nδ-H)
-                                [ ] HIE/HSE (neutral, Nε-H)
-                                [ ] HIP/HSP (protonated, +1)
-  (repeat for each)
-
-─── Cysteines in cluster ──────────────────────────────────
-
-  (check SG–SG distances < 2.5 Å for disulfides,
-   SG–metal distances < 3.0 Å for metal coordination)
-
-  Resi ____  Chain ____  State: [ ] Neutral (free or disulfide)
-                                [ ] CYM (−1, metal-coordinating)
-  (repeat for each)
+  Resi ____  Chain ____  [ ] Neutral  [ ] CYM (−1)
 
 ─── Metals ────────────────────────────────────────────────
 
-  [ ] None found
-  [ ] Metal present:
-      Element: ____  Resi: ____  Oxidation state: ____
-      Coordinating residues: _______________
-      (these will be force-included in the cluster)
+  [ ] None
+  [ ] Present: ____  Resi: ____  Oxidation: ____
+      Coordinating: _______________
 
 ─── Spin ──────────────────────────────────────────────────
 
-  [ ] Closed-shell (singlet, multiplicity = 1)
-  [ ] Open-shell:  multiplicity = ___
-      (reasoning: _________________________)
+  [ ] Singlet (1)
+  [ ] Open-shell: multiplicity = ___
 
 ═══════════════════════════════════════════════════════════
 ```
 
-### How to fill it in
+### Key guidance
 
-**PDB format** — Check columns 73–76 for segment IDs (`PROA`, `PROB`, etc.). If multiple segments share a chain letter, it's CHARMM format and needs the normalization block.
+**Ligand identification** — Do NOT rely on HETATM records. CHARMM PDBs write everything as ATOM. Find residue names that are not standard amino acids (ALA–VAL), not HIS variants (HSD/HSE/HSP/HID/HIE/HIP), not caps (ACE/NME/NMA), and not solvent (HOH/WAT/TIP3/SOL). What remains is the ligand.
 
-**Ligand** — Do NOT rely on HETATM records alone. CHARMM PDBs write everything as ATOM, including ligands. Instead, identify the ligand by finding residue names that are **not** standard amino acids or common solvent. The 20 standard amino acids are: ALA, ARG, ASN, ASP, CYS, GLN, GLU, GLY, HIS, ILE, LEU, LYS, MET, PHE, PRO, SER, THR, TRP, TYR, VAL. Also treat CHARMM histidine variants (HSD, HSE, HSP) and common caps (ACE, NME, NMA) as protein. Anything else (excluding HOH, WAT, TIP3, SOL) is a candidate ligand. If multiple candidates exist, list them and ask the user to pick. Reason about the charge from functional groups:
-- Quaternary ammonium → +1
-- Carboxylate → −1
-- Phosphate → −2
-- If ambiguous, ask.
+**Cysteines** — Measure SG–SG distances with `cmd.get_distance`. Also check SG–metal distances for metal coordination.
 
-**Unusual protonation states** — Check residue names for non-standard protonation:
-- ASH / ASPP = protonated ASP → charge 0 (not −1)
-- GLH / GLUP = protonated GLU → charge 0 (not −1)
-- LYN = deprotonated LYS → charge 0 (not +1)
-These are rare but important. If present, flag them and confirm with the user.
-
-**Histidines** — If the PDB uses explicit naming (HID/HIE/HIP or HSD/HSE/HSP), fill in directly. If it uses generic HIS, inspect the H-bond network or ask the user.
-
-**Cysteines** — Measure SG–SG distances with `cmd.get_distance`. Below 2.5 Å = disulfide (neutral). Check SG–metal distances too — below 3.0 Å = metal-coordinating (CYM, −1).
-
-**Metals** — Search for common metal elements (Zn, Fe, Cu, Mg, Mn, Co, Ni). If found, identify coordinating residues and ask the user about the oxidation state.
-
-**Spin** — Default to singlet unless a metal with unpaired d-electrons or a radical intermediate is present. If uncertain, ask.
+**Metals** — Search for Zn, Fe, Cu, Mg, Mn, Co, Ni. Force-include coordinating residues regardless of cutoff.
 
 ---
 
 ## Runtime
-
-PyMOL ships its own Python. Always discover it at runtime:
 
 ```bash
 PYMOL_PYTHON=$(head -1 "$(which pymol)" | sed 's/#!//')
@@ -121,8 +89,6 @@ PYMOL_PYTHON=$(head -1 "$(which pymol)" | sed 's/#!//')
 ---
 
 ## Code Building Blocks
-
-Assemble these into a single script. Each block has clearly marked inputs you must fill in.
 
 ### Block: Boilerplate
 
@@ -140,119 +106,90 @@ pymol.finish_launching(['pymol', '-c'])
 cmd.load('FILL_PDB_PATH', 'system')
 ```
 
-### Block: Normalize CHARMM PDB (use when CHARMM format detected)
+### Block: Normalize CHARMM PDB
 
-CHARMM PDBs put multiple segments on the same chain letter, so `chain` alone
-cannot distinguish them. This block detects the collision and remaps segment IDs
-to unique chain letters, so all downstream code using `chain` works correctly.
+Remaps segment IDs to unique chain letters. Safe to run on any PDB — no-op if not needed.
 
 ```python
-# Check if any chain letter has multiple segment IDs
 chain_segs = {}
 cmd.iterate('system and name CA',
             'chain_segs.setdefault(chain, set()).add(segi)',
             space={'chain_segs': chain_segs})
 
 if any(len(segs) > 1 for segs in chain_segs.values()):
-    # Collect unique segment IDs in order
     segi_order = []
     _seen = set()
     cmd.iterate('system', 'lst.append(segi) if segi not in _seen else None; _seen.add(segi)',
                 space={'lst': segi_order, '_seen': _seen})
 
-    # Map each segment ID to a unique chain letter
     chain_pool = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
     segi_to_chain = {s: chain_pool[i] for i, s in enumerate(segi_order)}
     cmd.alter('system', 'chain = segi_to_chain[segi]', space={'segi_to_chain': segi_to_chain})
-    cmd.sort()  # re-sort after chain reassignment
-
-    print("CHARMM PDB detected — remapped segment IDs to chain letters:")
+    cmd.sort()
     for segi, ch in segi_to_chain.items():
         print(f"  {segi} → {ch}")
 ```
 
-### Block: Fix element column (use when CHARMM format detected)
+### Block: Fix element column
 
-CHARMM PDBs often have blank or incorrect element columns (columns 77–78). This
-causes PyMOL to misidentify atoms — e.g. a chlorine (`CL1`) may be read as carbon.
-This block fixes element assignments and strips non-physical particles (lone pairs,
-Drude particles).
+Fixes blank/wrong element columns in CHARMM PDBs. Handles 2-letter elements (Cl, Br, Fe, etc.) and strips lone pairs/Drude particles.
 
 ```python
-# Two-letter elements that could be confused with C, N, O, etc.
 TWO_LETTER_ELEMS = {'CL', 'BR', 'FE', 'ZN', 'MG', 'NA', 'CA', 'CU', 'MN',
                     'LI', 'NI', 'CO', 'SE', 'MO', 'CR'}
 
 PROTEIN_RESNAMES = {
     'ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY', 'HIS', 'ILE',
     'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 'THR', 'TRP', 'TYR', 'VAL',
-    'HSD', 'HSE', 'HSP', 'HID', 'HIE', 'HIP',
-    'ASH', 'GLH', 'LYN', 'ASPP', 'GLUP',
+    'HSD', 'HSE', 'HSP', 'HID', 'HIE', 'HIP', 'ASH', 'GLH', 'LYN',
     'ACE', 'NME', 'NMA',
 }
 
 def _infer_element(atom_name, resn):
-    """Infer element from atom name and residue context."""
     clean = atom_name.strip().upper()
-
-    # For protein residues: first alpha character is the element
     if resn.strip().upper() in PROTEIN_RESNAMES:
         for ch in clean:
-            if ch.isalpha():
-                return ch
-
-    # For ligands/ions: check two-letter elements first
+            if ch.isalpha(): return ch
     for elem in TWO_LETTER_ELEMS:
         if clean.startswith(elem):
             return elem[0] + elem[1].lower()
-
-    # Fallback: first alpha character
     for ch in clean:
-        if ch.isalpha():
-            return ch
+        if ch.isalpha(): return ch
     return 'X'
 
-# Strip lone pairs, Drude particles, and massless sites
+# Strip lone pairs, Drude particles, massless sites
 lp_atoms = []
 cmd.iterate('system', 'lp_atoms.append(index) if name.strip().upper().startswith(("LP","DRUDE","MW")) else None',
             space={'lp_atoms': lp_atoms})
 if lp_atoms:
     cmd.remove('index ' + '+'.join(str(i) for i in lp_atoms))
-    print(f"Removed {len(lp_atoms)} lone pair / Drude / massless atoms")
+    print(f"Removed {len(lp_atoms)} non-physical atoms")
 
-# Fix element assignments
+# Fix elements
 atom_data = []
 cmd.iterate('system', 'atom_data.append((index, name, resn, elem))',
             space={'atom_data': atom_data})
-
 fixes = {}
 for idx, name, resn, current_elem in atom_data:
     correct = _infer_element(name, resn)
     if current_elem.strip().upper() != correct.strip().upper():
         fixes[idx] = correct
-
 if fixes:
     cmd.alter('system', 'elem = fixes.get(index, elem)', space={'fixes': fixes})
     print(f"Fixed element column for {len(fixes)} atoms")
-    # Show a few examples
-    for idx, elem in list(fixes.items())[:5]:
-        info = []
-        cmd.iterate(f'index {idx}', 'info.append((name, resn, elem))', space={'info': info})
-        if info:
-            print(f"  atom {idx}: {info[0][0]} ({info[0][1]}) → {elem}")
 ```
 
 ### Block: Select inner region
 
 ```python
-# FILL: ligand residue name, cutoff distance
+# FILL
 LIGAND_RESN = 'LIG'
-CUTOFF = 5.0
+CUTOFF = 4.5
 
 cmd.select('ligand', f'system and resn {LIGAND_RESN}')
 cmd.select('inner', f'byres (system within {CUTOFF} of ligand) or ligand')
 
-# If a metal must be included regardless of distance, add:
+# Force-include metal-coordinating residues if needed:
 # cmd.select('inner', 'inner or (system and resn ZN)')
 ```
 
@@ -260,41 +197,31 @@ cmd.select('inner', f'byres (system within {CUTOFF} of ligand) or ligand')
 
 ```python
 cluster_res = set()
-cmd.iterate(
-    f'inner and not resn {LIGAND_RESN} and name CA',
-    'cluster_res.add((chain, int(resi)))',
-    space={'cluster_res': cluster_res}
-)
+cmd.iterate(f'inner and not resn {LIGAND_RESN} and name CA',
+            'cluster_res.add((chain, int(resi)))',
+            space={'cluster_res': cluster_res})
 all_res = set()
-cmd.iterate(
-    f'system and not resn {LIGAND_RESN} and name CA',
-    'all_res.add((chain, int(resi)))',
-    space={'all_res': all_res}
-)
-print(f"Cluster residues: {sorted(cluster_res)}")
+cmd.iterate(f'system and not resn {LIGAND_RESN} and name CA',
+            'all_res.add((chain, int(resi)))',
+            space={'all_res': all_res})
+print(f"Cluster residues: {len(cluster_res)}")
 ```
 
 ### Block: Find backbone cut bonds
 
 ```python
-# Each entry: (cut_type, chain, inside_resi, outside_resi)
 cuts = []
 for (chain, resi) in sorted(cluster_res):
-    # C-terminal boundary: C(resi)–N(resi+1), outside is resi+1
     if (chain, resi + 1) in all_res and (chain, resi + 1) not in cluster_res:
         cuts.append(('C_terminal', chain, resi, resi + 1))
-    # N-terminal boundary: C(resi-1)–N(resi), outside is resi-1
     if (chain, resi - 1) in all_res and (chain, resi - 1) not in cluster_res:
         cuts.append(('N_terminal', chain, resi, resi - 1))
-
 print(f"Backbone cuts: {len(cuts)}")
-for c in cuts:
-    print(f"  {c}")
 ```
 
 ### Block: Place capping hydrogens
 
-One H per cut bond, placed along the original bond vector. No stub atoms.
+One H per cut bond, along the original bond vector.
 
 ```python
 def _get_xyz(sel, atom_name):
@@ -305,10 +232,10 @@ def _get_xyz(sel, atom_name):
         raise ValueError(f"Expected 1 atom for '{sel} name {atom_name}', got {len(coords)}")
     return np.array(coords[0])
 
-CH_BOND = 1.09  # Å, C–H
-NH_BOND = 1.01  # Å, N–H
+CH_BOND = 1.09  # C–H
+NH_BOND = 1.01  # N–H
 
-cap_atoms = []  # list of (atom_name, resn, chain, resi, xyz)
+cap_atoms = []
 for cut_type, chain, inside_resi, outside_resi in cuts:
     base = f'chain {chain} and resi'
     if cut_type == 'C_terminal':
@@ -327,15 +254,13 @@ for cut_type, chain, inside_resi, outside_resi in cuts:
     cmd.iterate(f'{base} {inside_resi} and name CA', 'resn_buf.append(resn)',
                 space={'resn_buf': resn_buf})
     cap_atoms.append(('HC', resn_buf[0], chain, inside_resi, h_xyz))
-
-print(f"Capping H atoms placed: {len(cap_atoms)}")
+print(f"Capping H atoms: {len(cap_atoms)}")
 ```
 
 ### Block: Save cluster PDB with caps
 
 ```python
-# FILL: output path
-OUTPUT_PDB = 'cluster.pdb'
+OUTPUT_PDB = 'cluster.pdb'  # FILL
 
 cmd.save('_cluster_raw.pdb', 'inner')
 with open('_cluster_raw.pdb') as f:
@@ -361,77 +286,39 @@ print(f"Wrote {OUTPUT_PDB}")
 
 ### Block: Calculate and report cluster charge
 
-Uses two methods as a sanity check: (1) residue-name lookup table, and
-(2) counting charged atom annotations in the PDB (CHARMM uses names
-like `N1+`, `O1-` for charged atoms). If the two disagree, flag it.
+Two methods as a sanity check: (1) residue-name table, (2) counting +/− atom name annotations (CHARMM PDBs encode charges as `N1+`, `O1-` in atom names).
 
 ```python
-# FILL: LIGAND_CHARGE (from user), and override any residue charges
-# that differ from the defaults below
 LIGAND_CHARGE = 0  # FILL
 
 RESIDUE_CHARGES = {
     'ASP': -1, 'GLU': -1,
     'ARG': +1, 'LYS': +1,
-    'HIS':  0, 'HID':  0, 'HIE':  0, 'HIP': +1,  # AMBER naming
-    'HSD':  0, 'HSE':  0, 'HSP': +1,              # CHARMM naming
-    'ASH':  0, 'ASPP': 0,                          # protonated ASP (neutral)
-    'GLH':  0, 'GLUP': 0,                          # protonated GLU (neutral)
-    'LYN':  0,                                      # deprotonated LYS (neutral)
+    'HIS':  0, 'HID':  0, 'HIE':  0, 'HIP': +1,
+    'HSD':  0, 'HSE':  0, 'HSP': +1,
+    'ASH':  0, 'ASPP': 0, 'GLH':  0, 'GLUP': 0, 'LYN': 0,
     'CYM': -1,
 }
 
-# --- Method 1: residue-name table ---
+# Method 1: residue-name table
 resnames = []
-cmd.iterate(
-    f'inner and not resn {LIGAND_RESN} and name CA',
-    'resnames.append(resn)', space={'resnames': resnames}
-)
-protein_charge_m1 = sum(RESIDUE_CHARGES.get(r, 0) for r in resnames)
-total_charge_m1 = protein_charge_m1 + LIGAND_CHARGE
+cmd.iterate(f'inner and not resn {LIGAND_RESN} and name CA',
+            'resnames.append(resn)', space={'resnames': resnames})
+protein_charge = sum(RESIDUE_CHARGES.get(r, 0) for r in resnames)
+total_m1 = protein_charge + LIGAND_CHARGE
 
-# --- Method 2: count charged atom annotations (CHARMM PDBs) ---
-# CHARMM sometimes encodes charges in atom names or element columns
-# e.g. atom name ending in '+' or '-', or element column 'N1+', 'O1-'
-pos_count = 0
-neg_count = 0
-cmd.iterate(
-    'inner',
-    'pos_count += (1 if name.strip().endswith("+") or "+" in elem else 0); '
-    'neg_count += (1 if name.strip().endswith("-") or "-" in elem else 0)',
-    space={'pos_count': pos_count, 'neg_count': neg_count}
-)
-# Note: pos_count/neg_count live in the space dict after iterate
-# Re-read them if needed:
+# Method 2: count +/- in atom names (CHARMM annotation)
 charge_data = {'pos': 0, 'neg': 0}
-cmd.iterate(
-    'inner',
-    'charge_data["pos"] += (1 if "+" in name.strip() else 0); '
-    'charge_data["neg"] += (1 if "-" in name.strip() else 0)',
-    space={'charge_data': charge_data}
-)
-total_charge_m2 = charge_data['pos'] - charge_data['neg']
+cmd.iterate('inner',
+            'charge_data["pos"] += (1 if "+" in name.strip() else 0); '
+            'charge_data["neg"] += (1 if "-" in name.strip() else 0)',
+            space={'charge_data': charge_data})
+total_m2 = charge_data['pos'] - charge_data['neg']
 
-print(f"\nCharge — Method 1 (residue names):")
-for r in resnames:
-    q = RESIDUE_CHARGES.get(r, 0)
-    if q != 0:
-        print(f"  {r}: {q:+d}")
-print(f"  Ligand ({LIGAND_RESN}): {LIGAND_CHARGE:+d}")
-print(f"  Total: {total_charge_m1:+d}")
-
-print(f"\nCharge — Method 2 (atom annotations):")
-print(f"  Positive atoms (+): {charge_data['pos']}")
-print(f"  Negative atoms (-): {charge_data['neg']}")
-print(f"  Total: {total_charge_m2:+d}")
-
-if total_charge_m1 != total_charge_m2:
-    print(f"\n*** WARNING: charge methods disagree! ***")
-    print(f"  Method 1 = {total_charge_m1:+d},  Method 2 = {total_charge_m2:+d}")
-    print(f"  Check for unusual protonation states (ASH, GLH, LYN) or")
-    print(f"  ligand charge. Method 2 does not include ligand charge.")
-else:
-    print(f"\nCharge methods agree: {total_charge_m1:+d}")
+print(f"\nCharge (residue names): {total_m1:+d}")
+print(f"Charge (atom annotations, excl. ligand): {total_m2:+d}")
+if total_m1 != total_m2:
+    print(f"*** WARNING: methods disagree — check protonation states ***")
 ```
 
 ### Block: Teardown
@@ -443,7 +330,7 @@ cmd.quit()
 ---
 
 ## Notes
-- Always call `cmd.quit()` at the end or the process hangs.
-- `byres` expands distance selections to complete residues — never use a raw distance selection as a cluster boundary.
-- Selection atom names are case-sensitive: `name CA` not `name ca`.
-- If the PDB already has hydrogens, skip capping hydrogen placement and just save the cluster directly.
+- Always call `cmd.quit()` or the process hangs.
+- `byres` expands distance selections to complete residues.
+- Atom names are case-sensitive: `name CA` not `name ca`.
+- If the PDB already has hydrogens, skip capping and save directly.

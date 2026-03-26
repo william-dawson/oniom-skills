@@ -1,29 +1,27 @@
 ---
 name: oniom
-description: Set up and run a two-layer ONIOM calculation on a protein-ligand system, using XTB or ORCA as backends. Guides method selection, charge/multiplicity decisions, and inner region definition. Use after the cluster has been prepared (see the pymol skill).
+description: Set up a two-layer ONIOM calculation using XTB or ORCA. Guides method, charge, multiplicity, and inner region decisions. Use after running the pymol skill.
 user-invocable: true
 allowed-tools: Read, Write, Bash, Glob
 ---
 
-# ONIOM Setup (XTB or ORCA backends)
+# ONIOM Setup
 
-Your job is to write input files tailored to the user's system, assembled from the building blocks below. **Walk the user through each decision one question at a time.** Do not dump all options at once or fill in defaults silently.
+Write input files tailored to the user's system from the building blocks below. **Ask each question one at a time**, waiting for the answer before moving on.
 
-## Before Writing Any Input
+## Prerequisites
 
-**First, check that the PDB has been prepared.** If you already ran the pymol skill (`/pymol:pymol`) in this conversation and produced a clean cluster PDB, proceed with the questions below. If not — or if the user is pointing you at a raw PDB that hasn't been through the cluster extraction step — stop and tell them:
+If the pymol skill (`/pymol:pymol`) has NOT been run in this conversation, stop and tell the user:
 
-> This PDB hasn't been through the cluster extraction step yet. Run `/pymol:pymol` first to normalize CHARMM formatting, fix element columns, identify the ligand, and determine the charge. Then come back here.
+> Run `/pymol:pymol` first to normalize the PDB, identify the ligand, and determine charges. Then come back here.
 
-Do not attempt to do the cleanup yourself in this skill.
+Do not attempt PDB cleanup in this skill.
 
 ---
 
-Ask each question below **one at a time**, waiting for the user's answer before moving on. You can state your recommendation, but the user must confirm or change it.
+## Questions (ask one at a time)
 
-### Question 1 — Charges
-
-Confirm the charges from the cluster extraction step:
+### 1 — Charges
 
 ```
 From the cluster extraction:
@@ -33,18 +31,16 @@ From the cluster extraction:
 Does this look right?
 ```
 
-### Question 2 — Multiplicity
+### 2 — Multiplicity
 
-If the system is clearly closed-shell (no metals, no radicals), state that and confirm. If there is any ambiguity, explain your reasoning and ask.
+State your assessment and confirm. Only ask if ambiguous (metals, radicals).
 
 ```
 This system appears closed-shell → multiplicity = 1 (singlet).
 Is that correct?
 ```
 
-### Question 3 — Method
-
-Present the options and your recommendation:
+### 3 — Method
 
 ```
 Which method combination?
@@ -52,72 +48,57 @@ Which method combination?
   ① XTB only (fast)
      GFN2-xTB (inner) / GFN-FF (outer)
 
-  ② XTB + ORCA (DFT inner region, XTB drives)
+  ② XTB + ORCA (DFT inner, XTB drives)
      You specify the ORCA method (e.g. r2SCAN-3c)
 
   ③ ORCA native QM/XTB (electrostatic embedding)
      You specify the QM method (e.g. wB97X-D3 def2-TZVP)
 
-I'd recommend ① for a fast first look. Which do you prefer?
+I'd recommend ① for a first look. Which do you prefer?
 ```
 
-If they pick ② or ③, follow up asking which DFT method they want.
+If ② or ③, follow up asking which DFT method.
 
-### Question 4 — Inner region cutoff
-
-Ask the user to pick a distance:
+### 4 — Inner region cutoff
 
 ```
 How large should the inner (high-level) region be?
 
   3.5 Å — ligand + immediate contacts
-  4.5 Å — compact active site
+  4.5 Å — compact active site (recommended)
   5.0 Å — standard active site
 
 What cutoff would you like?
 ```
 
-### Question 5 — Execution
+### 5 — Execution
 
 ```
 How do you want to run this?
 
-  a) Locally (I'll generate a run.sh script)
-  b) On a SLURM cluster (I'll help you set up a batch script)
+  a) Locally (generates run.sh)
+  b) On a SLURM cluster (I'll help set up a batch script)
 ```
 
-If they pick (b), use the **slurm** skill (`/pymol:slurm`) to walk through the cluster details.
+If (b), use `/pymol:slurm`.
 
 ### Then generate
 
-Only after all five questions are answered, assemble the script from the building blocks below.
+Only after all questions are answered, assemble the script.
 
 ---
 
-## Runtime
-
-The setup script below uses PyMOL's bundled Python:
-
-```bash
-PYMOL_PYTHON=$(head -1 "$(which pymol)" | sed 's/#!//')
-"$PYMOL_PYTHON" setup_oniom.py
-```
-
----
-
-## ONIOM Energy Scheme
+## ONIOM Energy
 
 ```
 E_oniom = E(whole, low) − E(inner, low) + E(inner, high)
 ```
 
-XTB places link atoms at cut bonds automatically. **Only cut single bonds.**
+XTB places link atoms at cut bonds automatically. **Only cut single bonds.** Use `xtb ... --cut` to verify before running.
 
 ---
 
 ## Code Building Blocks
-
-Assemble these into a script. Fill in the marked values before running.
 
 ### Block: Boilerplate
 
@@ -129,13 +110,11 @@ pymol.finish_launching(['pymol', '-c'])
 
 ### Block: Load and select inner region
 
-The PDB should already be clean from the pymol skill step.
-
 ```python
 # FILL
 PDB_PATH    = 'protein_ligand.pdb'
 LIGAND_RESN = 'LIG'
-CUTOFF      = 5.0  # inner region cutoff in Å
+CUTOFF      = 4.5
 
 cmd.load(PDB_PATH, 'system')
 cmd.select('ligand', f'system and resn {LIGAND_RESN}')
@@ -143,8 +122,6 @@ cmd.select('inner',  f'byres (system within {CUTOFF} of ligand) or ligand')
 ```
 
 ### Block: Collect atom order and inner indices
-
-PyMOL iterates atoms in index order, which matches XYZ file line order.
 
 ```python
 all_atoms = []
@@ -160,17 +137,14 @@ print(f"Inner region: {len(inner_pymol)} atoms")
 ### Block: Compute charges
 
 ```python
-# FILL
-LIGAND_CHARGE = 0
+LIGAND_CHARGE = 0  # FILL
 
 RESIDUE_CHARGES = {
     'ASP': -1, 'GLU': -1,
     'ARG': +1, 'LYS': +1,
-    'HIS':  0, 'HID':  0, 'HIE':  0, 'HIP': +1,  # AMBER naming
-    'HSD':  0, 'HSE':  0, 'HSP': +1,              # CHARMM naming
-    'ASH':  0, 'ASPP': 0,                          # protonated ASP (neutral)
-    'GLH':  0, 'GLUP': 0,                          # protonated GLU (neutral)
-    'LYN':  0,                                      # deprotonated LYS (neutral)
+    'HIS':  0, 'HID':  0, 'HIE':  0, 'HIP': +1,
+    'HSD':  0, 'HSE':  0, 'HSP': +1,
+    'ASH':  0, 'ASPP': 0, 'GLH':  0, 'GLUP': 0, 'LYN': 0,
     'CYM': -1,
 }
 
@@ -182,7 +156,6 @@ cmd.iterate(f'system and not resn {LIGAND_RESN} and name CA',
 
 inner_charge = sum(RESIDUE_CHARGES.get(r, 0) for r in inner_resnames) + LIGAND_CHARGE
 total_charge  = sum(RESIDUE_CHARGES.get(r, 0) for r in all_resnames)  + LIGAND_CHARGE
-
 print(f"Inner charge: {inner_charge:+d}   Total charge: {total_charge:+d}")
 ```
 
@@ -190,9 +163,7 @@ print(f"Inner charge: {inner_charge:+d}   Total charge: {total_charge:+d}")
 
 ### XTB Driver Blocks
 
-Use these when `driver = 'xtb'`.
-
-#### Block: Format XTB index ranges (1-based)
+#### Format XTB index ranges (1-based)
 
 ```python
 def fmt_xtb(indices):
@@ -211,13 +182,12 @@ inner_xtb = [i + 1 for i, idx in enumerate(all_atoms) if idx in inner_pymol]
 inner_range = fmt_xtb(inner_xtb)
 ```
 
-#### Block: Save XYZ and write XTB run script
+#### Save XYZ and write XTB run script
 
 ```python
-# FILL
-OUTDIR   = 'oniom_xtb'
-HIGH     = 'gfn2'   # or 'orca' if using ORCA high level
-LOW      = 'gfnff'
+OUTDIR = 'oniom_xtb'  # FILL
+HIGH   = 'gfn2'
+LOW    = 'gfnff'
 
 os.makedirs(OUTDIR, exist_ok=True)
 cmd.save(f'{OUTDIR}/system.xyz', 'system')
@@ -236,31 +206,29 @@ with open(f'{OUTDIR}/run.sh', 'w') as f:
     f.write('cd "$(dirname "$0")"\n')
     f.write(xtb_cmd + '\n')
 os.chmod(f'{OUTDIR}/run.sh', 0o755)
-print(f"Wrote {OUTDIR}/run.sh\nRun: cd {OUTDIR} && ./run.sh")
+print(f"Run: cd {OUTDIR} && ./run.sh")
 ```
 
-#### Block: xcontrol for ORCA as XTB high level (optional)
+#### xcontrol for ORCA high level (option ②)
 
-Only needed when using ORCA inside the XTB driver. The ORCA input must include `! engrad`.
+Only needed for XTB + ORCA. The ORCA input must include `! engrad`. Add `--input xcontrol` to `xtb_cmd`.
 
 ```python
-ORCA_INP_PATH = 'orca.inp'  # FILL: path to your ORCA input file
+ORCA_INP_PATH = 'orca.inp'  # FILL
 
 with open(f'{OUTDIR}/xcontrol', 'w') as f:
     f.write('$external\n')
     f.write(f'   orca input file={os.path.abspath(ORCA_INP_PATH)}\n')
     f.write('$end\n')
-
-# Append --input xcontrol to xtb_cmd before writing run.sh
 ```
 
 ---
 
-### ORCA Driver Blocks
+### ORCA Driver Blocks (option ③)
 
-Use these when `driver = 'orca'`. Indices are **0-based**. The full system XYZ is embedded in the input file. Low level is always XTB2.
+Indices are **0-based**. Coordinates embedded in the input file. Low level is always XTB2.
 
-#### Block: Format ORCA QMATOMS ranges (0-based)
+#### Format ORCA QMATOMS ranges (0-based)
 
 ```python
 def fmt_orca(indices):
@@ -279,20 +247,18 @@ inner_orca = [i for i, idx in enumerate(all_atoms) if idx in inner_pymol]
 qmatoms_str = fmt_orca(inner_orca)
 ```
 
-#### Block: Write ORCA QM/XTB input with embedded coordinates
+#### Write ORCA QM/XTB input
 
 ```python
-# FILL
-OUTDIR     = 'oniom_orca'
-QM_METHOD  = 'r2SCAN-3c'  # e.g. 'wB97X-D3 def2-TZVP'
-MULTIPLICITY = 1  # FILL: 1 = singlet, 2 = doublet, 3 = triplet, etc.
+OUTDIR       = 'oniom_orca'  # FILL
+QM_METHOD    = 'r2SCAN-3c'   # FILL
+MULTIPLICITY = 1              # FILL
 
 os.makedirs(OUTDIR, exist_ok=True)
 
-# Save XYZ temporarily to get coordinate lines
 cmd.save(f'{OUTDIR}/_tmp.xyz', 'system')
 with open(f'{OUTDIR}/_tmp.xyz') as f:
-    coord_lines = f.readlines()[2:]  # skip atom count and comment
+    coord_lines = f.readlines()[2:]
 os.remove(f'{OUTDIR}/_tmp.xyz')
 
 with open(f'{OUTDIR}/orca_oniom.inp', 'w') as f:
@@ -305,12 +271,11 @@ with open(f'{OUTDIR}/orca_oniom.inp', 'w') as f:
 with open(f'{OUTDIR}/run.sh', 'w') as f:
     f.write('#!/bin/sh\n')
     f.write(f'# ORCA QM/XTB: {QM_METHOD} (inner) / XTB2 (outer)\n')
-    f.write(f'# QM region: {len(inner_orca)} atoms\n')
-    f.write(f'# Total: {len(all_atoms)} atoms, charge {total_charge:+d}, mult {MULTIPLICITY}\n')
+    f.write(f'# QM region: {len(inner_orca)} atoms, total: {len(all_atoms)}\n')
     f.write('cd "$(dirname "$0")"\n')
     f.write('orca orca_oniom.inp\n')
 os.chmod(f'{OUTDIR}/run.sh', 0o755)
-print(f"Wrote {OUTDIR}/orca_oniom.inp\nRun: cd {OUTDIR} && ./run.sh")
+print(f"Run: cd {OUTDIR} && ./run.sh")
 ```
 
 ### Block: Teardown
@@ -318,25 +283,3 @@ print(f"Wrote {OUTDIR}/orca_oniom.inp\nRun: cd {OUTDIR} && ./run.sh")
 ```python
 cmd.quit()
 ```
-
----
-
-## Verify Before Running
-
-Remind the user to:
-1. Check the inner/outer boundary does not cut any double or aromatic bond — use `xtb ... --cut` to inspect.
-2. Confirm multiplicity if any metal or radical is present.
-3. For ORCA driver: confirm `! engrad` is present if using ORCA inside XTB driver mode.
-
-## Running the Calculation
-
-After generating the input files, ask the user how they want to run:
-
-```
-─── Execution ─────────────────────────────────────────────
-
-  [ ] Run locally (just use the generated run.sh)
-  [ ] Submit to a SLURM cluster
-```
-
-If they choose SLURM, use the **slurm** skill (`/pymol:slurm`) to walk them through partition, resources, and modules, then generate a batch script that calls `./run.sh` (or the appropriate run command) from the output directory.
