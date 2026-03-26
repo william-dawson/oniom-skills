@@ -43,13 +43,14 @@ Is that correct?
 ### 3 — Method
 
 ```
-Which method combination?
+Which approach?
 
-  ① XTB only (fast)
+  ① XTB built-in ONIOM (fast, single command)
      GFN2-xTB (inner) / GFN-FF (outer)
 
-  ② XTB + ORCA (DFT inner, XTB drives)
-     You specify the ORCA method (e.g. r2SCAN-3c)
+  ② 3-point manual (three separate calculations)
+     You pick the high and low methods independently.
+     Generates three run scripts — can use different programs.
 
   ③ ORCA native QM/XTB (electrostatic embedding)
      You specify the QM method (e.g. wB97X-D3 def2-TZVP)
@@ -57,7 +58,7 @@ Which method combination?
 I'd recommend ① for a first look. Which do you prefer?
 ```
 
-If ② or ③, follow up asking which DFT method.
+If ② or ③, follow up asking which high-level method (GFN2, r2SCAN-3c, wB97X-D3, etc.).
 
 ### 4 — Inner region cutoff
 
@@ -168,7 +169,7 @@ print(f"Inner charge: {inner_charge:+d}   Total charge: {total_charge:+d}")
 
 ---
 
-### XTB Driver Blocks
+### Option ① — XTB Built-in ONIOM Blocks
 
 #### Format XTB index ranges (1-based)
 
@@ -216,9 +217,9 @@ os.chmod(f'{OUTDIR}/run.sh', 0o755)
 print(f"Run: cd {OUTDIR} && ./run.sh")
 ```
 
-#### xcontrol for ORCA high level (option ②)
+#### xcontrol for ORCA high level (optional within option ①)
 
-Only needed for XTB + ORCA. The ORCA input must include `! engrad`. Add `--input xcontrol` to `xtb_cmd`.
+Only if using ORCA as the high level inside XTB's ONIOM. The ORCA input must include `! engrad`. Add `--input xcontrol` to `xtb_cmd`.
 
 ```python
 ORCA_INP_PATH = 'orca.inp'  # FILL
@@ -231,7 +232,104 @@ with open(f'{OUTDIR}/xcontrol', 'w') as f:
 
 ---
 
-### ORCA Driver Blocks (option ③)
+### Option ② — 3-Point Manual ONIOM Blocks
+
+Three separate calculations, combined as: `E_oniom = E(whole,low) − E(inner,low) + E(inner,high)`.
+
+This uses the **capped cluster PDB** from the pymol skill as the inner region. The cluster already has link atoms (capping H) placed at backbone cuts.
+
+#### Save geometries
+
+```python
+OUTDIR      = 'oniom_3pt'    # FILL
+CLUSTER_PDB = 'cluster.pdb'  # FILL: capped cluster from pymol skill
+
+os.makedirs(OUTDIR, exist_ok=True)
+
+# Full system XYZ
+cmd.save(f'{OUTDIR}/whole.xyz', 'system')
+
+# Inner region XYZ (load the capped cluster, save as XYZ)
+cmd.load(CLUSTER_PDB, 'cluster')
+cmd.save(f'{OUTDIR}/inner.xyz', 'cluster')
+cmd.delete('cluster')
+```
+
+#### Generate three run scripts
+
+```python
+# FILL
+HIGH_METHOD = 'gfn2'    # e.g. 'gfn2', or 'orca' for DFT
+LOW_METHOD  = 'gfnff'
+MULTIPLICITY = 1
+
+# --- Run 1: E(whole, low) ---
+with open(f'{OUTDIR}/run_whole_low.sh', 'w') as f:
+    f.write('#!/bin/sh\n')
+    f.write(f'# Point 1: whole system at {LOW_METHOD.upper()}\n')
+    f.write('cd "$(dirname "$0")"\n')
+    f.write(f'xtb whole.xyz --{LOW_METHOD} --chrg {total_charge} > whole_low.out 2>&1\n')
+    f.write('grep "TOTAL ENERGY" whole_low.out\n')
+os.chmod(f'{OUTDIR}/run_whole_low.sh', 0o755)
+
+# --- Run 2: E(inner, low) ---
+with open(f'{OUTDIR}/run_inner_low.sh', 'w') as f:
+    f.write('#!/bin/sh\n')
+    f.write(f'# Point 2: inner region at {LOW_METHOD.upper()}\n')
+    f.write('cd "$(dirname "$0")"\n')
+    f.write(f'xtb inner.xyz --{LOW_METHOD} --chrg {inner_charge} > inner_low.out 2>&1\n')
+    f.write('grep "TOTAL ENERGY" inner_low.out\n')
+os.chmod(f'{OUTDIR}/run_inner_low.sh', 0o755)
+
+# --- Run 3: E(inner, high) ---
+if HIGH_METHOD.startswith('gfn') or HIGH_METHOD == 'gfnff':
+    # XTB high level
+    with open(f'{OUTDIR}/run_inner_high.sh', 'w') as f:
+        f.write('#!/bin/sh\n')
+        f.write(f'# Point 3: inner region at {HIGH_METHOD.upper()}\n')
+        f.write('cd "$(dirname "$0")"\n')
+        f.write(f'xtb inner.xyz --{HIGH_METHOD} --chrg {inner_charge} > inner_high.out 2>&1\n')
+        f.write('grep "TOTAL ENERGY" inner_high.out\n')
+    os.chmod(f'{OUTDIR}/run_inner_high.sh', 0o755)
+else:
+    # ORCA high level — generate .inp file
+    with open(f'{OUTDIR}/inner.xyz') as xf:
+        coord_lines = xf.readlines()[2:]
+    with open(f'{OUTDIR}/inner_high.inp', 'w') as f:
+        f.write(f'! {HIGH_METHOD}\n\n')
+        f.write(f'* XYZ {inner_charge} {MULTIPLICITY}\n')
+        f.writelines(coord_lines)
+        f.write('*\n')
+    with open(f'{OUTDIR}/run_inner_high.sh', 'w') as f:
+        f.write('#!/bin/sh\n')
+        f.write(f'# Point 3: inner region at {HIGH_METHOD} (ORCA)\n')
+        f.write('cd "$(dirname "$0")"\n')
+        f.write('orca inner_high.inp > inner_high.out 2>&1\n')
+    os.chmod(f'{OUTDIR}/run_inner_high.sh', 0o755)
+
+print(f"Wrote 3 run scripts in {OUTDIR}/")
+```
+
+#### Run all three and combine
+
+```bash
+cd oniom_3pt
+./run_whole_low.sh
+./run_inner_low.sh
+./run_inner_high.sh
+```
+
+After all three finish, extract the `TOTAL ENERGY` from each `.out` file:
+
+```
+E_oniom = E(whole,low) − E(inner,low) + E(inner,high)
+```
+
+The LLM should parse the output files, extract the energies, and compute `E_oniom` for the user.
+
+---
+
+### Option ③ — ORCA Native QM/XTB Blocks
 
 Indices are **0-based**. Coordinates embedded in the input file. Low level is always XTB2.
 
