@@ -16,13 +16,15 @@ A Claude Code plugin for setting up QM and QM/MM calculations from protein-ligan
 
 ## What it does
 
-This plugin provides two skills that guide you through the full workflow from raw PDB to a ready-to-run quantum chemistry calculation:
+This plugin provides three skills that guide you through the full workflow from raw PDB to a running calculation on your cluster:
 
-1. **`/pymol:pymol`** — Extract a QM cluster model. Selects residues around a ligand, applies amide capping (link-atom approach), and determines the cluster charge.
+1. **`/pymol:pymol`** — Extract a QM cluster model. Normalizes CHARMM PDBs, identifies the ligand, selects residues within a cutoff, applies amide capping, handles metal coordination shells, and determines the cluster charge.
 
-2. **`/pymol:oniom`** — Set up a two-layer ONIOM calculation. Supports XTB as the driver (GFN2/GFN-FF) and ORCA as the driver (QM/XTB embedding). Handles inner region selection, charge/multiplicity, and generates ready-to-run input files.
+2. **`/pymol:oniom`** — Set up a two-layer ONIOM calculation. Three approaches: XTB built-in ONIOM, 3-point manual (three separate calculations you control), or ORCA native QM/XTB. Walks you through method, cutoff, charge, and multiplicity one question at a time.
 
-The skills are conversational — they inspect your structure, ask about ambiguous chemistry (ligand charge, histidine protonation states, metal oxidation states, open-shell character), and write a script tailored to your specific system.
+3. **`/pymol:slurm`** — Generate a SLURM batch script. Asks about partition, account, CPUs, memory, wall time, and how your software is installed (module, conda, or custom path). Produces a ready-to-submit script.
+
+The skills are conversational — they inspect your structure, ask about ambiguous chemistry (ligand charge, protonation states, metal oxidation states, open-shell character), and write scripts tailored to your specific system.
 
 ## Requirements
 
