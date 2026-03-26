@@ -1,8 +1,12 @@
 {
   "name": "pymol",
-  "description": "A skill for using PyMOL (by Schrödinger) to extract QM cluster models from protein-ligand PDB files — select residues around a ligand, apply amide capping, and calculate cluster charge. Requires PyMOL to be installed separately.",
+  "description": "QM cluster model extraction and ONIOM calculation setup from protein-ligand PDB files. Includes three skills: cluster extraction with PyMOL, ONIOM input generation for XTB/ORCA, and SLURM batch script preparation. Requires PyMOL on $PATH; XTB and ORCA optional.",
   "version": "0.2.1",
   "author": {
     "name": "wddawson"
-  }
+  },
+  "homepage": "https://github.com/william-dawson/oniom-skills",
+  "repository": "https://github.com/william-dawson/oniom-skills",
+  "license": "MIT",
+  "keywords": ["pymol", "oniom", "xtb", "orca", "qm", "computational-chemistry", "slurm"]
 }
