@@ -79,7 +79,7 @@ Work through each item. For items you can resolve automatically, fill in the ans
 
 **PDB format** — Check columns 73–76 for segment IDs (`PROA`, `PROB`, etc.). If multiple segments share a chain letter, it's CHARMM format and needs the normalization block.
 
-**Ligand** — Look at HETATM records (excluding HOH/WAT). If multiple non-water HETATM groups exist, list them and ask the user to pick. Reason about the charge from functional groups:
+**Ligand** — Do NOT rely on HETATM records alone. CHARMM PDBs write everything as ATOM, including ligands. Instead, identify the ligand by finding residue names that are **not** standard amino acids or common solvent. The 20 standard amino acids are: ALA, ARG, ASN, ASP, CYS, GLN, GLU, GLY, HIS, ILE, LEU, LYS, MET, PHE, PRO, SER, THR, TRP, TYR, VAL. Also treat CHARMM histidine variants (HSD, HSE, HSP) and common caps (ACE, NME, NMA) as protein. Anything else (excluding HOH, WAT, TIP3, SOL) is a candidate ligand. If multiple candidates exist, list them and ask the user to pick. Reason about the charge from functional groups:
 - Quaternary ammonium → +1
 - Carboxylate → −1
 - Phosphate → −2
