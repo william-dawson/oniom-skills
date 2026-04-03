@@ -91,6 +91,14 @@ cd $SLURM_SUBMIT_DIR
 FILL_RUN_COMMAND
 ```
 
+## Stacksize
+
+A lot of codes require you to increase the openmp stacksize:
+```
+export OMP_STACKSIZE=512M
+```
+XTB is a good example of this. Confirm with the user if you are not sure. 
+
 ## Notes
 - Use `$SLURM_CPUS_PER_TASK` for thread counts, never hardcode.
 - ORCA: keep `--ntasks-per-node` in sync with `%pal nprocs` in the input.
