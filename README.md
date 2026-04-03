@@ -1,6 +1,7 @@
 # oniom-skills
 
 A Claude Code plugin for setting up QM and QM/MM calculations from protein-ligand PDB files.
+The protein file you are working on should be in CHARMM format (generate with CHARMM-GUI)
 
 ## Installation
 
@@ -31,16 +32,14 @@ The skills are conversational — they inspect your structure, ask about ambiguo
 - [PyMOL](https://pymol.org) (open-source or commercial) — must be on `$PATH`
 - [XTB](https://github.com/grimme-lab/xtb) ≥ 6.6 — for ONIOM calculations with the XTB driver
 - [ORCA](https://orcasoftware.de) — optional, for DFT-level inner region calculations
+- [CHARMM-GUI](https://www.charmm-gui.org) - recommended way to generate the PDB files.
 
 ## Usage
 
+Say something like:
 ```
-/pymol:pymol    # start cluster extraction
-/pymol:oniom    # set up ONIOM calculation
-/pymol:slurm    # generate SLURM submission script
+Using your pymol skills, prepare an oniom calculation with XTB on the pdb file in this directory
 ```
-
-Both skills write Python scripts using PyMOL's bundled interpreter, discovered automatically at runtime — no hardcoded paths.
 
 ## Credits
 
