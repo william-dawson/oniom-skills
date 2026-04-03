@@ -41,6 +41,20 @@ Say something like:
 Using your pymol skills, prepare an oniom calculation with XTB on the pdb file in this directory
 ```
 
+## Codex
+
+You can install these skills directly into Codex from GitHub.
+
+For a project-local install:
+
+```bash
+mkdir -p .codex/skills
+python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
+    --repo william-dawson/oniom-skills \
+    --path skills/pymol skills/oniom skills/slurm \
+    --dest "$PWD/.codex/skills"
+```
+
 ## Credits
 
 PyMOL is developed by [Schrödinger, LLC](https://pymol.org). XTB is developed by the [Grimme group](https://github.com/grimme-lab/xtb). ORCA is developed by the [Neese group](https://orcasoftware.de). This plugin provides only the Claude Code skill layer on top of these tools.
