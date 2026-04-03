@@ -38,6 +38,11 @@ Read the PDB and fill in this checklist. For items you can resolve automatically
 
 ─── Protonation states ────────────────────────────────────
 
+  NOTE: For CHARMM-GUI PDBs, residue names may NOT be updated
+  when protonation states are changed. A protonated ASP may
+  still be named "ASP" but carry an HD2 atom. Always verify
+  by hydrogen counting (see Block below), not residue names.
+
   Histidines near ligand:
     Resi ____  Chain ____  [ ] HID/HSD (Nδ-H, 0)
                            [ ] HIE/HSE (Nε-H, 0)
@@ -72,6 +77,8 @@ Read the PDB and fill in this checklist. For items you can resolve automatically
 ### Key guidance
 
 **Ligand identification** — Do NOT rely on HETATM records. CHARMM PDBs write everything as ATOM. Find residue names that are not standard amino acids (ALA–VAL), not HIS variants (HSD/HSE/HSP/HID/HIE/HIP), not caps (ACE/NME/NMA), and not solvent (HOH/WAT/TIP3/SOL). What remains is the ligand.
+
+**CHARMM-GUI protonation** — CHARMM-GUI may add or remove protons from titratable residues without renaming them. A protonated Asp may still be called "ASP" but carry HD1 or HD2. A deprotonated Lys may still be called "LYS" with only 2 HZ atoms. Do NOT rely on residue names alone. Always run the "Verify protonation by hydrogen counting" block and use those results for all charge calculations.
 
 **Cysteines** — Measure SG–SG distances with `cmd.get_distance`. Also check SG–metal distances for metal coordination.
 
@@ -238,6 +245,110 @@ cmd.iterate(f'system and not resn {LIGAND_RESN} and name CA',
 print(f"Cluster residues: {len(cluster_res)}")
 ```
 
+### Pre-flight: Protonation diagnostic
+
+**Run this standalone script before writing the extraction script.** It collects every
+hydrogen atom on every titratable residue across the full system and prints them as a
+table. Read the output, apply your knowledge of each amino acid's standard hydrogen
+complement, and determine the actual protonation state of each residue. Record your
+conclusions as `actual_charges` in the extraction script — do not let the script infer
+charges automatically, as hardcoded rules cannot cover every naming convention.
+
+#### PyMOL coding notes for this script
+
+**Collecting atom names** — use `cmd.iterate` with a list captured via the `space` dict.
+Any variable referenced inside the expression string must appear in `space`, otherwise
+PyMOL uses an empty namespace and the result is silently empty:
+
+```python
+names = []
+cmd.iterate('system and chain A and resi 25',
+            'names.append(name.strip())',
+            space={'names': names})
+```
+
+**Always call `.strip()`** — CHARMM PDB atom names are stored with leading/trailing
+spaces (e.g., `' HD2'`). Without `.strip()`, the string `'HD2'` will not match.
+
+**Selection scoping** — always prefix selections with the object name (`system`, `inner`)
+to avoid cross-contamination when multiple objects are loaded simultaneously:
+
+```python
+cmd.iterate('system and chain A and resi 25', ...)  # safe
+cmd.iterate('chain A and resi 25', ...)             # risky
+```
+
+#### Diagnostic script
+
+```python
+# Run with: pymol -cq -r hcount.py
+from pymol import cmd
+
+TITRATABLE = {'ASP', 'GLU', 'LYS', 'ARG',
+              'HIS', 'HSD', 'HSE', 'HSP', 'HID', 'HIE', 'HIP',
+              'CYS', 'CYM', 'ASH', 'ASPP', 'GLH', 'GLUP', 'LYN'}
+
+cmd.load('FILL_PDB_PATH', 'system')
+
+tit_res = []
+cmd.iterate('system and name CA',
+            'tit_res.append((chain, resi, resn)) if resn in TITRATABLE else None',
+            space={'tit_res': tit_res, 'TITRATABLE': TITRATABLE})
+
+print(f"{'Resn':<6} {'Ch':>2} {'Resi':>4}  {'nH':>3}  H atoms")
+print("-" * 70)
+for chain, resi, resn in sorted(tit_res, key=lambda x: (x[0], int(x[1]))):
+    names = []
+    cmd.iterate(f'system and chain {chain} and resi {resi}',
+                'names.append(name.strip())', space={'names': names})
+    h_names = sorted(n for n in names if n.startswith('H'))
+    print(f"{resn:<6} {chain:>2} {resi:>4}  {len(h_names):>3}  {h_names}")
+```
+
+#### Interpreting the output
+
+For each row, compare the H atom list against the expected hydrogen complement for that
+residue type. Any deviation from the standard count indicates a non-standard protonation
+state — regardless of what the residue name says.
+
+Use your built-in knowledge of amino acid chemistry to make this determination. As a
+reference, the sidechain H atoms that change with protonation state are:
+
+| Residue | Extra H when protonated | Missing H when deprotonated |
+|---------|------------------------|------------------------------|
+| ASP (std −1) | HD1 or HD2 on carboxylate → charge 0 | — |
+| GLU (std −1) | HE1 or HE2 on carboxylate → charge 0 | — |
+| LYS (std +1) | — | fewer than 3 HZ on NZ → charge 0 |
+| ARG (std +1) | — | rarely deprotonated; flag if HH/HE missing |
+| HIS (std 0) | HD1 = Nδ protonated (HSD); HE2 = Nε protonated (HSE); both = HIP (+1) | |
+| CYS (std 0) | — | HG absent on SG → −1 or disulfide (check SG–SG < 2.5 Å) |
+
+#### After running the diagnostic
+
+Read the printed table row by row. For each titratable residue, compare its H atom list
+against the expected complement for that residue type (reference table above) and assign
+a charge. Then write your conclusions to `protonation.json` using the Write tool — do
+not keep them only in conversation context. The extraction script will load this file.
+
+`protonation.json` schema:
+
+```json
+{
+  "ligand": {"resn": "LIG", "charge": 0},
+  "residues": [
+    {"chain": "B", "resi": 25, "resn": "ASP", "charge":  0, "h_atoms": ["HA","HB1","HB2","HD2","HN"], "note": "protonated — has HD2"},
+    {"chain": "B", "resi": 29, "resn": "ASP", "charge": -1, "h_atoms": ["HA","HB1","HB2","HN"],       "note": "deprotonated"},
+    {"chain": "B", "resi": 45, "resn": "LYS", "charge": +1, "h_atoms": ["HA","HB1","HB2","HG","HZ1","HZ2","HZ3","HN"], "note": "3 HZ — charged"}
+  ],
+  "inner_charge": -2,
+  "system_charge": 7
+}
+```
+
+Include every titratable residue in the system (not only the inner region) so total
+system charge can also be verified. Include `h_atoms` verbatim from the diagnostic
+output so the file is self-documenting and auditable.
+
 ### Block: Find backbone cut bonds
 
 ```python
@@ -317,39 +428,45 @@ print(f"Wrote {OUTPUT_PDB}")
 
 ### Block: Calculate and report cluster charge
 
-Two methods as a sanity check: (1) residue-name table, (2) counting +/− atom name annotations (CHARMM PDBs encode charges as `N1+`, `O1-` in atom names).
+Loads protonation states from `protonation.json` written during the pre-flight
+diagnostic. Only residues that appear in the inner region contribute to the cluster
+charge; the JSON may contain the full system so this filters by `(chain, resi)`.
 
 ```python
-LIGAND_CHARGE = 0  # FILL
+import json
 
-RESIDUE_CHARGES = {
-    'ASP': -1, 'GLU': -1,
-    'ARG': +1, 'LYS': +1,
-    'HIS':  0, 'HID':  0, 'HIE':  0, 'HIP': +1,
-    'HSD':  0, 'HSE':  0, 'HSP': +1,
-    'ASH':  0, 'ASPP': 0, 'GLH':  0, 'GLUP': 0, 'LYN': 0,
-    'CYM': -1,
-}
+with open('protonation.json') as f:
+    prot = json.load(f)
 
-# Method 1: residue-name table
-resnames = []
+LIGAND_CHARGE = prot['ligand']['charge']
+
+# Build lookup from JSON; only count residues present in the inner region
+all_prot = {(r['chain'], str(r['resi'])): r for r in prot['residues']}
+
+inner_res_data = []
 cmd.iterate(f'inner and not resn {LIGAND_RESN} and name CA',
-            'resnames.append(resn)', space={'resnames': resnames})
-protein_charge = sum(RESIDUE_CHARGES.get(r, 0) for r in resnames)
-total_m1 = protein_charge + LIGAND_CHARGE
+            'inner_res_data.append((chain, resi, resn))',
+            space={'inner_res_data': inner_res_data})
 
-# Method 2: count +/- in atom names (CHARMM annotation)
-charge_data = {'pos': 0, 'neg': 0}
-cmd.iterate('inner',
-            'charge_data["pos"] += (1 if "+" in name.strip() else 0); '
-            'charge_data["neg"] += (1 if "-" in name.strip() else 0)',
-            space={'charge_data': charge_data})
-total_m2 = charge_data['pos'] - charge_data['neg']
+actual_charges = {}
+missing = []
+for chain, resi, resn in inner_res_data:
+    key = (chain, str(resi))
+    if key in all_prot:
+        actual_charges[key] = all_prot[key]['charge']
+    # Non-titratable residues (ALA, GLY, etc.) carry no charge — skip silently
 
-print(f"\nCharge (residue names): {total_m1:+d}")
-print(f"Charge (atom annotations, excl. ligand): {total_m2:+d}")
-if total_m1 != total_m2:
-    print(f"*** WARNING: methods disagree — check protonation states ***")
+protein_charge = sum(actual_charges.values())
+total_charge = protein_charge + LIGAND_CHARGE
+
+print(f"\nCluster charge breakdown:")
+for (ch, ri), q in sorted(actual_charges.items(), key=lambda x: (x[0][0], int(x[0][1]))):
+    resn = all_prot[(ch, ri)]['resn']
+    note = all_prot[(ch, ri)].get('note', '')
+    print(f"  {resn} chain {ch} resi {ri}: {q:+d}  ({note})")
+print(f"  Ligand ({prot['ligand']['resn']}): {LIGAND_CHARGE:+d}")
+print(f"  ─────────────────")
+print(f"  Inner total: {total_charge:+d}")
 ```
 
 ---
@@ -358,3 +475,4 @@ if total_m1 != total_m2:
 - `byres` expands distance selections to complete residues.
 - Atom names are case-sensitive: `name CA` not `name ca`.
 - If the PDB already has hydrogens, skip capping and save directly.
+- Always present the per-residue protonation audit table to the user before reporting the final charge.
