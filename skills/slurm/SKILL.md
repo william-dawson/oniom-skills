@@ -103,3 +103,119 @@ XTB is a good example of this. Confirm with the user if you are not sure.
 - Use `$SLURM_CPUS_PER_TASK` for thread counts, never hardcode.
 - ORCA: keep `--ntasks-per-node` in sync with `%pal nprocs` in the input.
 - XTB: reads `OMP_NUM_THREADS`, no MPI needed.
+
+---
+
+## Periodic Fetch and Visualization Workflow
+
+For iterative metadynamics runs, the real workflow is **rsync + local analysis**, not just checking `get_job_status`.
+
+### One-shot sync
+
+```bash
+mkdir -p outputs/my_project
+cd outputs/my_project
+
+# Pull only output files (not inputs) from all run_* directories
+rsync -avz --prune-empty-dirs \
+  --include='run_*/' \
+  --include='run_*/xtbopt.log' \
+  --include='run_*/xtbopt.xyz' \
+  --include='run_*/*.log' \
+  --include='run_*/.xtboptok' \
+  --include='run_*/reference.xyz' \
+  --exclude='*' \
+  user@cluster:/path/to/my_project/ .
+```
+
+### Continuous poller
+
+Save as `poll_and_fetch.py` and run locally:
+
+```python
+#!/usr/bin/env python3
+"""Poll cluster for completed metadynamics runs and rsync results."""
+import argparse, subprocess, sys, time
+
+REMOTE_USER = "user"
+REMOTE_HOST = "cluster"
+REMOTE_BASE = "/path/to/my_project"
+LOCAL_BASE = "./outputs/my_project"
+
+def rsync_outputs():
+    cmd = [
+        "rsync", "-avz", "--prune-empty-dirs",
+        "--include=run_*/",
+        "--include=run_*/xtbopt.log",
+        "--include=run_*/xtbopt.xyz",
+        "--include=run_*/*.log",
+        "--include=run_*/.xtboptok",
+        "--include=run_*/reference.xyz",
+        "--exclude=*",
+        f"{REMOTE_USER}@{REMOTE_HOST}:{REMOTE_BASE}/",
+        LOCAL_BASE,
+    ]
+    subprocess.run(cmd)
+
+def count_completed():
+    import glob, os
+    runs = glob.glob(f"{LOCAL_BASE}/run_*")
+    done = sum(1 for d in runs if os.path.isfile(f"{d}/.xtboptok"))
+    return len(runs), done
+
+def count_frames(run_dir):
+    log = f"{run_dir}/xtbopt.log"
+    if not os.path.isfile(log):
+        return 0
+    result = subprocess.run(["grep", "-c", "^\\s*\\d\\+\\s*$", log],
+                            capture_output=True, text=True)
+    return int(result.stdout.strip()) if result.returncode == 0 else 0
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--watch", action="store_true", help="loop forever")
+    parser.add_argument("--interval", type=int, default=60)
+    args = parser.parse_args()
+
+    while True:
+        rsync_outputs()
+        total, done = count_completed()
+        print(f"Runs: {done}/{total} completed")
+        for d in sorted(glob.glob(f"{LOCAL_BASE}/run_*")):
+            n = count_frames(d)
+            status = "DONE" if os.path.isfile(f"{d}/.xtboptok") else "running"
+            print(f"  {os.path.basename(d)}: {n} frames [{status}]")
+        if not args.watch:
+            break
+        time.sleep(args.interval)
+```
+
+Run:
+```bash
+python3 poll_and_fetch.py          # one-shot
+python3 poll_and_fetch.py --watch  # every 60s
+```
+
+### Load trajectory in PyMOL
+
+```bash
+pymol outputs/my_project/run_h1_saltbridge/xtbopt.log
+```
+
+Then in PyMOL:
+```
+load outputs/my_project/run_h1_saltbridge/reference.xyz, ref
+align traj, ref
+show sticks, ref and not elem H
+color gray, ref
+show sticks, traj and not elem H
+color cyan, traj
+```
+
+### Key insight
+
+`get_job_status` and `read_job_output` are for diagnostics, but the real feedback loop is:
+1. `rsync` pulls `xtbopt.log` trajectories
+2. PyMOL visualizes them locally
+3. You decide which hypotheses worked and design the next batch
+

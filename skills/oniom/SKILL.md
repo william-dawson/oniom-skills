@@ -447,3 +447,562 @@ os.chmod(f'{OUTDIR}/run.sh', 0o755)
 print(f"Run: cd {OUTDIR} && ./run.sh")
 ```
 
+---
+
+## Metadynamics
+
+Metadynamics is **iterative** — each geometry step evaluates ONIOM energy + gradient once. The GFN-FF outer region runs on the **entire system** every step regardless of inner size. System truncation is therefore mandatory.
+
+**Upstream xtb main does not apply metadynamics at the ONIOM wrapper level.** Use the special fork (see Technical Reference below).
+
+For plain energy calculations (single-point or one-shot geometry optimization without bias), use the sections above.
+
+---
+
+### Physics of `static=true` metadynamics
+
+Reading `src/metadynamic.f90` and `src/dynamic.f90` reveals how the bias actually works:
+
+#### `static=true` with `--opt` (repulsive wall)
+
+All `save=N` "structures" are copies of the same reference geometry. The bias is a **single Gaussian** with amplitude `N × factor`:
+
+```
+bias(rmsd) = (N × factor) × exp(-width × rmsd²)
+```
+
+This is a **massive repulsive wall** at the reference geometry. The optimizer pushes the system away until physical forces balance the bias. `save` and `factor` are **not independent controls** — they just multiply.
+
+| Parameter | Role | To push farther |
+|-----------|------|-----------------|
+| `save × factor` | **Amplitude** at rmsd = 0 (Eh) | Increase |
+| `width` | **Range** — inverse Gaussian variance (Å⁻²) | Decrease |
+
+| Variant | `save` | `factor` | `width` | Amplitude (Eh) | Push to ~1 Eh |
+|---------|--------|----------|---------|---------------|---------------|
+| `weak` | 50 | 0.5 | 1.0 | 25 | ~1.7 Å |
+| `med` | 200 | 0.5 | 0.5 | 100 | ~2.2 Å |
+| `strong` | 500 | 1.0 | 0.5 | 500 | ~2.8 Å |
+| `long` | 1000 | 1.0 | 0.2 | 1000 | ~4.3 Å |
+
+*Push distance ≈ RMSD where bias ≈ 1×10⁻²⁰ Eh. Formula: `rmsd = sqrt(ln(amplitude) / width)`.*
+
+#### `static=false` with `--md` (dynamic metadynamics)
+
+Hills are deposited during MD in a FIFO buffer. Each new hill is ramped gradually. This is true history-dependent metadynamics that can fill free-energy basins. **ONIOM + dynamic MD metadynamics may not be fully wired** — the ONIOM wrapper uses the global `metaset`, not the local `metasetlocal`. Test before production.
+
+| Strategy | Mode | Controls | Use case |
+|----------|------|----------|----------|
+| **Repulsive wall** | `--opt` + `static=true` | `save×factor` = amplitude, `width` = range | Rapidly find new minima |
+| **Well-tempered MTD** | `--md` + `static=false` | `factor` = hill height, `save` = buffer, `width` = sigma | True free-energy mapping (if compatible) |
+
+---
+
+### Phase 0 — Analyze the site before hypothesizing
+
+Do not guess which residues matter. Look at the structure first.
+
+#### Step 0.1: Identify the ligand
+
+| Property | How to determine |
+|----------|-----------------|
+| Residue name | First non-standard resn in the PDB (e.g. BEN, NAG, ATP) |
+| Formal charge | Sum protonation states of ionizable groups |
+| Key functional groups | `cmd.iterate` atom names; look for carboxylate, ammonium, guanidinium, phosphate, amide |
+
+#### Step 0.2: Map the pocket with heavy-atom distances
+
+For every protein residue, compute the **minimum distance from any ligand heavy atom to any residue heavy atom** (exclude hydrogen).
+
+> **Why heavy atoms only?** `cmd.h_add()` places hydrogens algorithmically; they can spuriously pull residues closer. On trypsin-BEN, His57 is 3.98 Å with H but 5.53 Å with heavy atoms only. Asp102 is 7.39 Å with H, 7.96 Å with heavy atoms.
+
+```python
+from pymol import cmd
+import math
+
+# ... after loading, removing solvent, and h_add ...
+lig_model = cmd.get_model('system and resn BEN')
+lig_heavy = [(a.coord[0], a.coord[1], a.coord[2]) for a in lig_model.atom
+             if a.name[0] not in ('H', 'D')]
+
+atom_elems = {}
+cmd.iterate('system', 'atom_elems[index] = elem', space={'atom_elems': atom_elems})
+
+def residue_min_heavy_dist(resi):
+    model = cmd.get_model(f'system and resi {resi}')
+    heavy = [a for a in model.atom if atom_elems.get(a.index, 'H') != 'H']
+    if not heavy:
+        return float('inf')
+    min_d = float('inf')
+    for a in heavy:
+        for lx, ly, lz in lig_heavy:
+            d = math.sqrt((a.coord[0]-lx)**2 + (a.coord[1]-ly)**2 + (a.coord[2]-lz)**2)
+            if d < min_d:
+                min_d = d
+    return min_d
+```
+
+Classify residues into zones:
+
+| Zone | Distance criterion | Purpose in system |
+|------|--------------------|-------------------|
+| **Inner (QM)** | ≤ 5 Å from ligand OR selected for a hypothesis | High-level GFN2 |
+| **Active (MM, moving)** | ≤ 6 Å from ligand, not inner | GFN-FF, unrestrained |
+| **Frozen (MM, fixed)** | > 6 Å and ≤ truncation cutoff | GFN-FF, `$fix` to prevent collapse |
+| **Excluded** | > truncation cutoff | Removed from system entirely |
+
+**Use atom-level distances, NOT `byres` distances.** `cmd.select('byres (within 12 of ...)')` keeps whole residues when a single sidechain atom is within 12 Å. This overcounts by ~2.5×. On trypsin-BEN, `byres` 12 Å keeps 1311 atoms; atom-distance-based truncation at 8 Å keeps **472 atoms**.
+
+> **Example — trypsin with benzamidine:**
+> - ≤5 Å (inner candidates): 17 residues, 215 atoms
+> - 5–6 Å (active): 5 residues, 79 atoms (e.g. Lys224 5.14 Å, His57 5.53 Å, Tyr172 5.69 Å)
+> - 6–8 Å (frozen): 10 residues, 160 atoms (e.g. Asp102 7.96 Å, Leu158 7.98 Å)
+> - >8 Å (exclude): everything else = 3106 atoms
+> - Truncated total at 8 Å: **472 atoms** (vs. 3238 full, vs. 1311 `byres` 12 Å)
+
+#### Step 0.3: Build the pocket map
+
+```python
+# After loading with h_add, compute for every residue:
+pocket = []  # list of (resi, resn, min_dist, atom_count)
+# ... fill from atom-level heavy-atom distances ...
+pocket.sort(key=lambda x: x[2])
+
+for resi, resn, dist, n_atoms in pocket:
+    if dist <= 10.0:
+        zone = "inner" if dist <= 5.0 else ("active" if dist <= 6.0 else "buffer")
+        print(f"  {resn:>5}{resi:>5}  {dist:>6.2f} Å  ({n_atoms} atoms)  [{zone}]")
+```
+
+---
+
+### Phase 1 — Generate hypotheses from the pocket map
+
+Hypotheses must be grounded in **observed proximity** and **known chemistry**. Do NOT invoke mechanistic labels unless the involved residues are actually within interaction distance.
+
+#### Required hypotheses
+
+| Hypothesis | What to look for in pocket map | Inner residues (example: trypsin-BEN) |
+|-----------|--------------------------------------|---------------------------------------|
+| **H1 Salt bridge** | Charged ligand group + Asp/Glu within 5–8 Å | BEN + Asp189 (2.87 Å) |
+| **H2 Hydrophobic pocket** | Aromatic / aliphatic wall around ligand | BEN + Asp189 + Trp215 (3.84 Å) |
+| **H3 Nearby catalytic** | Ser/Thr/His/backbone within 5–8 Å that could H-bond | BEN + Asp189 + Ser195 + Gly193 (≤5.5 Å) |
+| **H4 Sidechain rotation** | Sidechain reaching toward ligand, might rotate | Optional — pick from pocket map |
+
+#### Validation rule
+
+After generating hypotheses, **verify**: every residue in the inner list must be ≤ 10 Å from the ligand. If a residue is farther:
+- Either it cannot physically interact — **drop it**
+- Or expand truncation radius and accept the cost
+
+**Never silently include a residue just because it's in a textbook mechanism.**
+
+> **Bad example:** "BEN + His57 + Asp102 + Asp189 + Ser195" as "catalytic triad." Asp102 is 7.96 Å from BEN, His57 is 5.53 Å — both are outside a compact inner-QM region.
+>
+> **Good example:** "BEN + Asp189 + Ser195 + Gly193" — all within 2.9–5.5 Å.
+
+---
+
+### Phase 2 — Build the truncated system per hypothesis
+
+#### Truncation radius
+
+Set by the **farthest hypothesis residue** plus a **2 Å buffer** (minimum 8 Å):
+
+```python
+max_hypothesis_dist = max(dist[resi] for resi in hypothesis_residues)
+TRUNCATE_CUTOFF = max(max_hypothesis_dist + 2.0, 8.0)
+```
+
+In practice this is almost always **8–10 Å**.
+
+#### Atom-level selection (not byres)
+
+Select atoms individually by distance — residue boundaries do not matter for GFN-FF.
+
+```python
+keep_resis = {resi for resi, resn in all_residues
+              if residue_distances[resi] <= TRUNCATE_CUTOFF}
+```
+
+#### Freeze shell
+
+Freeze atoms in the buffer zone to prevent pocket collapse during metadynamics. Residues whose closest heavy atom is **> 6.0 Å** from the ligand are frozen.
+
+```python
+freeze_resis = {r for r in keep_resis
+                if residue_distances[r] > 6.0 and r not in hypothesis_residues}
+```
+
+---
+
+### Phase 3 — Write per-hypothesis inputs
+
+#### inner.txt
+
+Same format as the ONIOM energy blocks above: `fmt_xtb(sorted(inner_atoms))`
+
+#### xcontrol
+
+```
+$fix
+atoms: {freeze_atoms}
+$end
+
+$metadyn
+save={save}
+factor={factor}
+width={width}
+coord=reference.xyz
+atoms: {bias_atoms}
+static=true
+$end
+```
+
+#### Bias-atom selection
+
+The `$metadyn atoms:` defines the RMSD Gaussian reference. **Always include the full ligand** unless studying sidechain-only motion.
+
+| Hypothesis type | Extra bias atoms | Rationale |
+|-----------------|-----------------|-----------|
+| Salt bridge | Asp/Glu carboxylate O atoms | Track Asp rotation relative to ligand |
+| Hydrophobic pocket | Aromatic ring heavy atoms (~6-membered) | Track π-stacking displacement |
+| Nearby H-bond | H-bond donor/acceptor sidechain atoms | Track H-bond distance/orientation |
+| Sidechain rotation | Full sidechain of the rotating residue | Track torsional reorganization |
+
+**Bias fewer than ~25 atoms total.** More atoms = broader Gaussian = weaker push.
+
+---
+
+### Charges
+
+- Pass `--chrg N` on the CLI (e.g. `--chrg 0` for the truncated trypsin-BEN system).
+- **Recompute total charge after truncation.** Removal of charged surface residues changes the total. On full trypsin the charge is +7; after 8 Å truncation it drops to **0**.
+- Inner charge: auto-computed by xtb ONIOM via GFN-FF EEQ partial charges.
+- **Never use `--chrg inner:total`** — colon syntax triggers argument parser error.
+
+---
+
+### Threading rules
+
+xtb links **OpenBLAS** (not MKL). OpenBLAS spawns its own pthreads independently of OpenMP, causing oversubscription when OpenMP threads > 1.
+
+```bash
+# For geometry optimization / metadynamics (topology cached after step 1)
+export OMP_NUM_THREADS=4
+export OPENBLAS_NUM_THREADS=1
+# In Slurm: -c 4 --mem=16G
+
+# For single-point energy (no geopt)
+export OMP_NUM_THREADS=1
+# Leave OPENBLAS_NUM_THREADS unset (default)
+# In Slurm: -c 1 --mem=8G
+```
+
+#### Why 4 cores?
+
+After topology caching, each step evaluates GFN-FF (threaded gradients) + GFN2 SCC (threaded integral/H1 build). On systems < 1500 atoms, >4 OpenMP threads causes oversubscription with OpenBLAS and slows the run. Measured on trypsin (1311 atoms, cached topology): n=4 = 13.4 s, n=8 = 24.0 s.
+
+---
+
+### Core allocation (measured, HBW2 mpc nodes)
+
+#### Per-evaluation cost (cached topology)
+
+One ONIOM energy + gradient evaluation after GFN-FF topology is cached on disk:
+
+| Total atoms | Inner atoms | Truncation | GFN-FF outer | GFN-FF inner | GFN2 SCC | Total / eval | Threads |
+|-------------|-------------|------------|--------------|--------------|----------|--------------|---------|
+| 3238 (full) | 30 | none | ~0.5 s* | ~0.0 s* | ~0.1 s* | ~0.6 s | 1 |
+| 1311 (`byres` 12Å) | 30 | `byres` 12Å | **0.312 s** | **0.000 s** | **0.132 s** | **0.444 s** | 8 (default OpenBLAS) |
+| 472 (atom 8Å) | 54 | atom 8Å | **0.035 s** | **0.001 s** | **0.06–0.13 s** | **0.10–0.17 s** | 4 |
+| 472 (atom 8Å) | 30 | atom 8Å | **0.032–0.070 s** | **0.000 s** | **0.015–2.27 s** | **0.05–2.34 s** | 4 |
+
+\* Estimated from scaling; not directly measured.
+
+> **Note on h1_saltbridge (30 inner) anomaly:** The first GFN2 SCC for a very small inner region can take **2.27 s** if the initial density guess is poor. Subsequent cycles reuse cached charges and drop to **~0.015 s**. In production metadynamics this only affects step 1; the remaining steps are fast.
+
+#### Single-point benchmark (includes topology build)
+
+| Total atoms | Inner atoms | Truncation | Total wall | SCF wall | Threads |
+|-------------|-------------|------------|------------|----------|---------|
+| 3238 (full) | 30 | none | 4 m 41 s | 4.9 s | 1 |
+| 1311 (`byres` 12Å) | 30 | `byres` 12Å | **20.3 s** | 0.7 s | 8 |
+| 472 (atom 8Å) | 54 | atom 8Å | **~3.6 s** | 0.19 s | 4 |
+
+#### Metadynamics total-time estimate
+
+A 50-step static metadynamics evaluates energy+gradient once per step. First step builds and caches GFN-FF topology. ANC optimizer overhead is included.
+
+| Truncation | Total atoms | Est. total time |
+|------------|-------------|-----------------|
+| None (full) | ~3238 | ~5–7 min |
+| `byres` 12Å | ~1311 | ~1.5 min |
+| Atom 8Å | ~472 | **~1 min** |
+
+**Key insight:** cost scales with **total atoms**, not inner atoms. The atom-level truncation is **~2.8× smaller** than `byres` 12Å and runs **~4–8× faster per step**.
+
+---
+
+### Phase 4 — Production run: one directory per hypothesis
+
+#### Directory convention
+
+```
+my_project/
+├── h1_saltbridge/
+│   ├── system.xyz
+│   ├── inner.txt
+│   ├── xcontrol
+│   ├── reference.xyz
+│   ├── charge.txt
+│   └── info.txt
+├── h2_pocket/
+│   └── ...
+└── submit_all.sh
+```
+
+#### Submit script
+
+```bash
+#!/bin/bash -l
+#SBATCH -J my_project-metadyn
+#SBATCH -p mpc
+#SBATCH -c 4
+#SBATCH --mem=16G
+#SBATCH -t 00:20:00
+#SBATCH --account FILL
+
+module load gcc
+export OMP_STACKSIZE=4G
+export OMP_NUM_THREADS=4
+export OPENBLAS_NUM_THREADS=1
+XTB=/path/to/xtb
+BASE=/path/to/my_project
+
+cd "$BASE"
+
+for cfg in h1_saltbridge h2_pocket h3_local_func; do
+    CHRG=$(cat ${cfg}/charge.txt)
+    INNER=$(cat ${cfg}/inner.txt)
+    mkdir -p "run_${cfg}"
+    cp ${cfg}/{system.xyz,inner.txt,xcontrol,reference.xyz} "run_${cfg}/"
+    cd "run_${cfg}"
+    $XTB system.xyz --oniom gfn2:gfnff "$INNER" --input xcontrol --chrg "$CHRG" --opt 2>&1 | tee "${cfg}.log"
+    cd ..
+done
+```
+
+> **CRITICAL:** Each hypothesis gets its own `run_*` directory. This avoids the GFN-FF topology cache bug that hangs sequential runs in the same directory.
+
+---
+
+### Phase 5 — Fetch results
+
+After the job completes, fetch these files per hypothesis:
+
+| File | Size | Purpose |
+|------|------|---------|
+| `run_*/xtbopt.log` | ~100 KB | **Trajectory** (multi-frame XYZ) — load in PyMOL |
+| `run_*/xtbopt.xyz` | ~35 KB | Final optimized geometry |
+| `run_*/*.log` | ~180 KB | Full xtb stdout (energies, timing) |
+| `run_*/gfnff_charges` | ~1 KB | Cached EEQ charges |
+| `run_*/gfnff_topo` | ~1–2 MB | Cached topology (optional) |
+
+Use `rsync` or `scp`:
+
+```bash
+mkdir -p outputs/my_project/{h1_saltbridge,h2_pocket,h3_local_func}
+for h in h1_saltbridge h2_pocket h3_local_func; do
+    rsync -avz user@cluster:/path/to/my_project/run_${h}/{xtbopt.log,xtbopt.xyz,*.log,.xtboptok} \
+        outputs/my_project/${h}/
+done
+```
+
+---
+
+### Phase 6 — Visualize
+
+#### Load trajectory and compare to reference
+
+```python
+from pymol import cmd
+
+PROJECT = '/path/to/outputs/my_project'
+H = 'h1_saltbridge'
+
+cmd.load(f'{PROJECT}/{H}/reference.xyz', 'ref')
+cmd.load(f'{PROJECT}/{H}/xtbopt.log', 'traj')   # multi-frame XYZ
+cmd.load(f'{PROJECT}/{H}/xtbopt.xyz', 'final')
+cmd.align('traj', 'ref')
+cmd.align('final', 'ref')
+
+cmd.show('sticks', 'ref and not elem H')
+cmd.color('gray', 'ref')
+cmd.show('sticks', 'traj and not elem H')
+cmd.color('cyan', 'traj')
+cmd.show('spheres', 'traj and resn BEN')
+
+# Check if ligand moved
+print("=== Did shit happen? ===")
+cmd.rms_cur('traj', 'ref', mobile=f'traj and resn BEN', target=f'ref and resn BEN')
+```
+
+#### What to look for
+
+| Question | How to check |
+|----------|--------------|
+| Did the ligand move? | `rms_cur` between `traj` and `ref` on ligand atoms |
+| Did the salt bridge break? | `distance` between amidinium N and Asp189 OD across frames |
+| Did the pocket wall shift? | `rms_cur` on Trp215 (or other aromatic) heavy atoms |
+| Did the bias push too hard? | Energy trend in `*.log` — should oscillate, not diverge |
+| Is the pocket collapsing? | `rms_cur` on frozen buffer atoms should be ~0; if >0.3 Å, truncation too aggressive |
+
+---
+
+### Phase 7 — Parameter sweep (aggressive exploration)
+
+To discover how far a given hypothesis can push the system, run a **parameter sweep** across amplitudes:
+
+```python
+variants = [
+    ('ext_weak',  {'save': 50,  'factor': 0.5, 'width': 1.0}),
+    ('ext_med',   {'save': 200, 'factor': 0.5, 'width': 0.5}),
+    ('ext_strong',{'save': 500, 'factor': 1.0, 'width': 0.5}),
+    ('ext_long',  {'save': 1000,'factor': 1.0, 'width': 0.2}),
+]
+```
+
+Each variant generates an `xcontrol` with the same `atoms:` bias but different `save`/`factor`/`width`. Group into batches based on expected wall time.
+
+---
+
+### Phase 8 — Path chaining and substrate swap
+
+#### Path chaining
+
+After Phase 1, use endpoint geometries as **new references** and bias toward the NEXT expected intermediate:
+
+1. Save `xtbopt.xyz` as `reference_step2.xyz`
+2. Design new bias atoms that push toward the next expected state
+3. Run metadynamics with the new reference
+
+This creates a **chain of metadynamics runs**: each link pushes from one intermediate to the next.
+
+#### Substrate swap (for full catalytic cycles)
+
+If the ligand is an inhibitor (e.g. BEN in trypsin), the full catalytic cycle requires a substrate analog. Options:
+- Modify the inhibitor in PyMOL to add a scissile peptide bond
+- Search for PDBs with tetrahedral intermediate analogs (e.g. trypsin-DIP, trypsin-TAME)
+- Use existing covalent inhibitor structures as TS-like references
+
+After substrate preparation, regenerate `system.xyz`, recompute charges, and re-run the full hypothesis pipeline.
+
+---
+
+## Technical Reference
+
+### Special xtb Fork
+
+Upstream xtb main does **not** correctly apply `$fix`/`$constrain` and metadynamics at the ONIOM wrapper level with correct atom indices. This causes silent failures or index-out-of-bounds errors.
+
+Use this fork:
+
+- **Fork**: `https://github.com/william-dawson/xtb` (branch `main`)
+- **Commit**: `a3d1be7` — "Apply constraints and fixed atoms at the ONIOM wrapper level"
+- **Build** (CMake):
+  ```bash
+  git clone https://github.com/william-dawson/xtb.git
+  cd xtb
+  git checkout a3d1be7
+  mkdir build && cd build
+  cmake .. -DWITH_TBLITE=true
+  cmake --build . -j$(nproc)
+  ```
+
+This fix moves `constrain_pot`, `constrpot`, `cavity_egrad`, and `metadynamic` calls to the ONIOM wrapper (`src/oniom.f90:~497`) where they operate on the full-system coordinate frame with correct atom indices. Fixed-atom zeroing also happens once at the ONIOM level after all sub-calculations.
+
+---
+
+### Fixed Atoms & Constraints
+
+#### 1. Write xcontrol (or xtb.inp)
+
+```
+$fix
+atoms: 30-289
+$end
+```
+
+**CRITICAL**: **NO leading whitespace** before keywords. The parser does `trim(line(:ie-1))` which only strips trailing spaces. Lines like `  atoms: 30-289` silently fail.
+
+#### 2. Pass --input explicitly
+
+```bash
+xtb --input xcontrol --oniom gfn2:gfnff "1-8" --grad cluster.pdb
+```
+
+xTB does **not** autoload `xcontrol` from the working directory; `--input` is mandatory.
+
+#### 3. Verify in the gradient file
+
+After the run, fixed atoms must show exactly `0.00000000` for all x, y, z components:
+
+```bash
+awk 'NR>=293+29 && NR<=293+288{print}' gradient | head
+```
+
+---
+
+### Internal metadynamics mechanism
+
+`metadynamic(metaset, nat, at, xyz, ebias, gradient)` (`src/metadynamic.f90:21-89`) computes:
+
+```
+ebias += Σ_i factor(i) × exp(-width(i) × rmsd_i²)
+```
+
+The gradient contribution is:
+
+```
+g += -2 × width × factor × exp(-width × rmsd²) × rmsd × (∂rmsd/∂xyz)
+```
+
+### Validation test pattern
+
+The unit test `test_oniom_metadynamics` in `test/unit/test_oniom.f90` validates the ONIOM wrapper path: with reference = current geometry and `factor=0.5`, the energy increment must equal `0.5` Eh within `1e-6`.
+
+### Programmatic cleanup
+
+After using metadynamics programmatically, clean up with:
+
+```fortran
+call clear_metadyn
+metaset%nstruc = 0
+metaset%maxsave = 0
+```
+
+`clear_metadyn` deallocates arrays. Zeroing `nstruc` and `maxsave` prevents residual state from being picked up by subsequent calculations, because `metadynamic()` returns early when `nstruc < 1`.
+
+---
+
+### Environment for Large Systems
+
+If you encounter stack-overflow crashes (common with 5000+ atoms and OpenMP), set:
+
+```bash
+export OMP_STACKSIZE=4G     # or 2G, 8G as needed
+export OMP_NUM_THREADS=2
+```
+
+---
+
+### Common Gotchas
+
+- **Index conventions**: XTB uses **1-based** atom indices in CLI and `inner.txt`. ORCA `QMATOMS` uses **0-based** indices.
+- **Link atoms**: XTB places link atoms at cut bonds automatically. **Only cut single bonds.** Use `xtb ... --cut` to verify before running.
+- **xcontrol autoload**: xTB never autoloads `xcontrol`. `--input` is mandatory.
+- **Whitespace sensitivity**: Keywords in `$fix`, `$constrain`, and `$metadyn` must start at column 1. Leading spaces silently fail.
+- **Colon syntax**: Never use `--chrg inner:total` — it may trigger the argument parser's help screen.
+
+
