@@ -110,6 +110,64 @@ XTB places link atoms at cut bonds automatically. **Only cut single bonds.** Use
 
 ---
 
+## XTB Binary: Fork & Build
+
+Upstream xTB main does **not** yet apply `$fix`/`$constrain` at the ONIOM wrapper level. Use this fork:
+
+- **Fork**: `https://github.com/william-dawson/xtb`  (branch `main`)
+- **Commit**: `a3d1be7` — "Apply constraints and fixed atoms at the ONIOM wrapper level"
+- **Build** (CMake):
+  ```bash
+  mkdir build && cd build
+  cmake .. -DWITH_TBLITE=true
+  make -j$(nproc)
+  ```
+
+This fix zeroes gradients on fixed atoms once at the ONIOM level instead of inside each sub-calculator (where atom indices are wrong).
+
+---
+
+## Fixed Atoms & Constraints with ONIOM
+
+To freeze part of the protein during ONIOM (e.g. keep the outer region rigid while optimizing the active site):
+
+### 1. Write `xcontrol` (or `xtb.inp`)
+
+```
+$fix
+atoms: 30-289
+$end
+```
+
+**CRITICAL**: **NO leading whitespace/indentation** before keywords. The parser does `trim(line(:ie-1))` which only strips trailing spaces. Lines like `  atoms: 30-289` silently fail.
+
+### 2. Pass `--input` explicitly
+
+```bash
+xtb --input xcontrol --oniom gfn2:gfnff "1-8" --grad cluster.pdb
+```
+
+xTB does **not** autoload `xcontrol` from the working directory; `--input` is mandatory.
+
+### 3. Verify in the `gradient` file
+
+After the run, fixed atoms must show exactly `0.00000000` for all x, y, z components:
+
+```bash
+awk 'NR>=293+29 && NR<=293+288{print}' gradient | head
+```
+
+### 4. Environment for large systems
+
+If you encounter stack-overflow crashes (common with 5000+ atoms and OpenMP), set:
+
+```bash
+export OMP_STACKSIZE=4G     # or 2G, 8G as needed
+export OMP_NUM_THREADS=2
+```
+
+---
+
 ## Code Building Blocks
 
 **NEVER use `python3` or `python`.** Always run via PyMOL:
