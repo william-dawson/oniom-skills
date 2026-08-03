@@ -489,12 +489,33 @@ This is a **massive repulsive wall** at the reference geometry. The optimizer pu
 
 #### `static=false` with `--md` (dynamic metadynamics)
 
-Hills are deposited during MD in a FIFO buffer. Each new hill is ramped gradually. This is true history-dependent metadynamics that can fill free-energy basins. **ONIOM + dynamic MD metadynamics may not be fully wired** — the ONIOM wrapper uses the global `metaset`, not the local `metasetlocal`. Test before production.
+Hills are deposited during MD in a FIFO buffer. Each new hill is ramped gradually. This is true history-dependent metadynamics that can fill free-energy basins.
 
-| Strategy | Mode | Controls | Use case |
-|----------|------|----------|----------|
-| **Repulsive wall** | `--opt` + `static=true` | `save×factor` = amplitude, `width` = range | Rapidly find new minima |
-| **Well-tempered MTD** | `--md` + `static=false` | `factor` = hill height, `save` = buffer, `width` = sigma | True free-energy mapping (if compatible) |
+**ONIOM + dynamic MD metadynamics is compatible** — confirmed on trypsin-BEN (472 atoms, GFN2/GFN-FF) with commit `d17b2ea`. The ONIOM wrapper calls `metadynamic()` on the full-system coordinates.
+
+**Critical caveat:** When using `$fix` (frozen atoms) with `--md`, you **must** add `shake=0` to the `$md` block. Otherwise SHAKE initialization segfaults because fixed atoms break the constraint solver.
+
+**Parameter mapping:** In dynamic mode, `factor` maps to `kpush` and `width` maps to `alpha`. The log printout shows:
+```
+--- metadynamics parameter ---
+ kpush  :    0.500   (from factor)
+ alpha  :    1.000   (from width)
+ update :     50     (from save)
+```
+
+**Wall / confinement for MD:** Without `$fix`, the truncated system may drift. Add a `$wall` logfermi sphere centered on the ligand to confine the inner region:
+```
+$wall
+potential=logfermi
+sphere: 12.0, all   # adjust radius to cover inner region
+temp=1000
+$end
+```
+
+| Strategy | Mode | Controls | Use case | Trajectory length |
+|----------|------|----------|----------|-------------------|
+| **Repulsive wall** | `--opt` + `static=true` | `save×factor` = amplitude, `width` = range | Rapidly find new minima | ~50–500 frames |
+| **Well-tempered MTD** | `--md` (omit `static`) | `factor`= hill height, `save` = deposit interval, `width` = sigma | True free-energy mapping | 1,000–10,000+ frames |
 
 ---
 
@@ -644,6 +665,8 @@ Same format as the ONIOM energy blocks above: `fmt_xtb(sorted(inner_atoms))`
 
 #### xcontrol
 
+**For `--opt` (biased geometry optimization):**
+
 ```
 $fix
 atoms: {freeze_atoms}
@@ -658,6 +681,34 @@ atoms: {bias_atoms}
 static=true
 $end
 ```
+
+**For `--md` (dynamic metadynamics — preferred for trajectory length):**
+
+```
+$fix
+atoms: {freeze_atoms}
+$end
+
+$metadyn
+save={save}
+factor={factor}
+width={width}
+$end
+
+$md
+temp=300
+time=100.0
+step=1.0
+dump=100.0
+shake=0
+$end
+```
+
+> **Why `shake=0`?** Fixed atoms break the SHAKE constraint solver. Disabling SHAKE lets the inner region move freely while the shell stays frozen.
+>
+> **Time and dump:** `time=100.0` = 100 ps, `dump=100.0` = 100 fs snapshot interval → ~1,000 frames. Scale `time` up to 1,000 ps (1 ns) for thorough exploration. `dump` should be 50–100 fs to keep file sizes reasonable.
+>
+> **No `coord` or `atoms`:** Dynamic metadynamics uses the full system geometry (or a default RMSD collective variable). The `coord=` and `atoms:` keywords are only meaningful with `static=true`.
 
 #### Bias-atom selection
 
@@ -764,13 +815,15 @@ my_project/
 
 #### Submit script
 
+**Recommended: `--md` for trajectory-based exploration (longer wall time)**
+
 ```bash
 #!/bin/bash -l
-#SBATCH -J my_project-metadyn
+#SBATCH -J my_project-mtd
 #SBATCH -p mpc
 #SBATCH -c 4
 #SBATCH --mem=16G
-#SBATCH -t 00:20:00
+#SBATCH -t 04:00:00
 #SBATCH --account FILL
 
 module load gcc
@@ -788,33 +841,62 @@ for cfg in h1_saltbridge h2_pocket h3_local_func; do
     mkdir -p "run_${cfg}"
     cp ${cfg}/{system.xyz,inner.txt,xcontrol,reference.xyz} "run_${cfg}/"
     cd "run_${cfg}"
-    $XTB system.xyz --oniom gfn2:gfnff "$INNER" --input xcontrol --chrg "$CHRG" --opt 2>&1 | tee "${cfg}.log"
+    $XTB system.xyz --oniom gfn2:gfnff "$INNER" --input xcontrol --chrg "$CHRG" --md --gfnff 2>&1 | tee "${cfg}.log"
     cd ..
 done
 ```
 
+**Quick test: `--opt` for repulsive-wall exploration (short wall time)**
+
+```bash
+#SBATCH -t 00:20:00
+# ... same setup ...
+$XTB system.xyz --oniom gfn2:gfnff "$INNER" --input xcontrol --chrg "$CHRG" --opt 2>&1 | tee "${cfg}.log"
+```
+
 > **CRITICAL:** Each hypothesis gets its own `run_*` directory. This avoids the GFN-FF topology cache bug that hangs sequential runs in the same directory.
+>
+> **Wall-time scaling ( `--md` ):**
+> | `time` in xcontrol | Steps | Est. wall time (472 atoms, 4 cores) |
+> |--------------------|-------|---------------------------------------|
+> | 10 ps | 10,000 | ~10 min |
+> | 100 ps | 100,000 | ~1.5 h |
+> | 1,000 ps (1 ns) | 1,000,000 | ~15 h |
+>
+> Use `mpc` for quick tests (1 h max), `mpc_l` for production (up to 72 h).
 
 ---
 
 ### Phase 5 — Fetch results
 
-After the job completes, fetch these files per hypothesis:
+#### `--opt` outputs
 
 | File | Size | Purpose |
 |------|------|---------|
 | `run_*/xtbopt.log` | ~100 KB | **Trajectory** (multi-frame XYZ) — load in PyMOL |
 | `run_*/xtbopt.xyz` | ~35 KB | Final optimized geometry |
 | `run_*/*.log` | ~180 KB | Full xtb stdout (energies, timing) |
+| `run_*/.xtboptok` | 0 B | Completion marker |
+
+#### `--md` outputs
+
+| File | Size | Purpose |
+|------|------|---------|
+| `run_*/xtb.trj` | ~1–5 MB | **MD trajectory** (multi-frame XYZ, 1,000–10,000 frames) |
+| `run_*/mdt.log` | ~200 KB–2 MB | Full stdout (energies, metadynamics parameters, timing) |
 | `run_*/gfnff_charges` | ~1 KB | Cached EEQ charges |
 | `run_*/gfnff_topo` | ~1–2 MB | Cached topology (optional) |
 
-Use `rsync` or `scp`:
+> **No `.xtboptok` for `--md`**: Since MD runs for a fixed simulation time, completion is inferred from the job state, not a disk marker.
 
 ```bash
 mkdir -p outputs/my_project/{h1_saltbridge,h2_pocket,h3_local_func}
 for h in h1_saltbridge h2_pocket h3_local_func; do
-    rsync -avz user@cluster:/path/to/my_project/run_${h}/{xtbopt.log,xtbopt.xyz,*.log,.xtboptok} \
+    # For --opt:
+    # rsync -avz user@cluster:/path/to/my_project/run_${h}/{xtbopt.log,xtbopt.xyz,*.log,.xtboptok} \
+    #     outputs/my_project/${h}/
+    # For --md:
+    rsync -avz user@cluster:/path/to/my_project/run_${h}/{xtb.trj,mdt.log,*.log,gfnff_charges,gfnff_topo} \
         outputs/my_project/${h}/
 done
 ```
@@ -824,6 +906,8 @@ done
 ### Phase 6 — Visualize
 
 #### Load trajectory and compare to reference
+
+**For `--opt` (optimization trajectory):**
 
 ```python
 from pymol import cmd
@@ -848,6 +932,29 @@ print("=== Did shit happen? ===")
 cmd.rms_cur('traj', 'ref', mobile=f'traj and resn BEN', target=f'ref and resn BEN')
 ```
 
+**For `--md` (MD trajectory, much longer):**
+
+```python
+from pymol import cmd
+
+PROJECT = '/path/to/outputs/my_project'
+H = 'h1_saltbridge'
+
+cmd.load(f'{PROJECT}/{H}/reference.xyz', 'ref')
+cmd.load(f'{PROJECT}/{H}/xtb.trj', 'md_traj')   # 1,000–10,000 frames
+cmd.align('md_traj', 'ref')
+
+cmd.show('sticks', 'ref and not elem H')
+cmd.color('gray', 'ref')
+cmd.show('sticks', 'md_traj and not elem H')
+cmd.color('cyan', 'md_traj')
+cmd.show('spheres', 'md_traj and resn BEN')
+
+# Frame 1 = start of MD; last frame = end of simulation
+print(f"Total frames: {cmd.count_states('md_traj')}")
+cmd.rms_cur('md_traj', 'ref', mobile=f'md_traj and resn BEN', target=f'ref and resn BEN')
+```
+
 #### What to look for
 
 | Question | How to check |
@@ -862,7 +969,11 @@ cmd.rms_cur('traj', 'ref', mobile=f'traj and resn BEN', target=f'ref and resn BE
 
 ### Phase 7 — Parameter sweep (aggressive exploration)
 
-To discover how far a given hypothesis can push the system, run a **parameter sweep** across amplitudes:
+To discover how far a given hypothesis can push the system, run a **parameter sweep** across amplitudes.
+
+#### Static bias (`--opt`)
+
+Use `coord=` + `atoms:` to bias toward a specific geometry:
 
 ```python
 variants = [
@@ -873,7 +984,28 @@ variants = [
 ]
 ```
 
-Each variant generates an `xcontrol` with the same `atoms:` bias but different `save`/`factor`/`width`. Group into batches based on expected wall time.
+Each variant generates an `xcontrol` with the same `atoms:` bias but different `save`/`factor`/`width`.
+
+#### Dynamic metadynamics (`--md`)
+
+Omit `coord` and `atoms:` so hills deposit on the fly during MD:
+
+```python
+variants = [
+    # Gentle exploration (mcp-reactor default)
+    ('md_gentle',   {'save': 50,  'factor': 0.01, 'width': 1.0}),
+    # Moderate pushing
+    ('md_mod',      {'save': 50,  'factor': 0.1,  'width': 1.0}),
+    # Strong exploration
+    ('md_strong',   {'save': 50,  'factor': 0.5,  'width': 1.0}),
+    # Very aggressive
+    ('md_aggro',    {'save': 50,  'factor': 1.0,  'width': 0.5}),
+]
+```
+
+**Mapping**: `factor` → `kpush`, `width` → `alpha`, `save` → `update` (hill deposit interval in steps).
+
+Group into batches based on expected wall time (see Phase 4 wall-time table).
 
 ---
 
@@ -1003,6 +1135,7 @@ export OMP_NUM_THREADS=2
 - **Link atoms**: XTB places link atoms at cut bonds automatically. **Only cut single bonds.** Use `xtb ... --cut` to verify before running.
 - **xcontrol autoload**: xTB never autoloads `xcontrol`. `--input` is mandatory.
 - **Whitespace sensitivity**: Keywords in `$fix`, `$constrain`, and `$metadyn` must start at column 1. Leading spaces silently fail.
+- **SHAKE + frozen atoms**: If using `$fix` with `--md`, set `shake=0` in the `$md` block. SHAKE initialization segfaults when fixed atoms are present.
 - **Colon syntax**: Never use `--chrg inner:total` — it may trigger the argument parser's help screen.
 
 

@@ -112,6 +112,8 @@ For iterative metadynamics runs, the real workflow is **rsync + local analysis**
 
 ### One-shot sync
 
+**For `--opt` runs:**
+
 ```bash
 mkdir -p outputs/my_project
 cd outputs/my_project
@@ -128,6 +130,26 @@ rsync -avz --prune-empty-dirs \
   user@cluster:/path/to/my_project/ .
 ```
 
+**For `--md` runs:**
+
+```bash
+mkdir -p outputs/my_project
+cd outputs/my_project
+
+rsync -avz --prune-empty-dirs \
+  --include='run_*/' \
+  --include='run_*/xtb.trj' \
+  --include='run_*/mdt.log' \
+  --include='run_*/*.log' \
+  --include='run_*/gfnff_charges' \
+  --include='run_*/gfnff_topo' \
+  --include='run_*/reference.xyz' \
+  --exclude='*' \
+  user@cluster:/path/to/my_project/ .
+```
+
+> **No `.xtboptok` for `--md`**: MD runs for a fixed simulation time; completion is inferred from job state or frame count, not a disk marker.
+
 ### Continuous poller
 
 Save as `poll_and_fetch.py` and run locally:
@@ -142,15 +164,30 @@ REMOTE_HOST = "cluster"
 REMOTE_BASE = "/path/to/my_project"
 LOCAL_BASE = "./outputs/my_project"
 
+RUN_MODE = "opt"  # or "md"
+
 def rsync_outputs():
+    includes = [
+        "--include=run_*/",
+        "--include=run_*/*.log",
+        "--include=run_*/reference.xyz",
+    ]
+    if RUN_MODE == "opt":
+        includes += [
+            "--include=run_*/xtbopt.log",
+            "--include=run_*/xtbopt.xyz",
+            "--include=run_*/.xtboptok",
+        ]
+    else:
+        includes += [
+            "--include=run_*/xtb.trj",
+            "--include=run_*/mdt.log",
+            "--include=run_*/gfnff_charges",
+            "--include=run_*/gfnff_topo",
+        ]
     cmd = [
         "rsync", "-avz", "--prune-empty-dirs",
-        "--include=run_*/",
-        "--include=run_*/xtbopt.log",
-        "--include=run_*/xtbopt.xyz",
-        "--include=run_*/*.log",
-        "--include=run_*/.xtboptok",
-        "--include=run_*/reference.xyz",
+        *includes,
         "--exclude=*",
         f"{REMOTE_USER}@{REMOTE_HOST}:{REMOTE_BASE}/",
         LOCAL_BASE,
@@ -160,11 +197,17 @@ def rsync_outputs():
 def count_completed():
     import glob, os
     runs = glob.glob(f"{LOCAL_BASE}/run_*")
-    done = sum(1 for d in runs if os.path.isfile(f"{d}/.xtboptok"))
+    if RUN_MODE == "opt":
+        done = sum(1 for d in runs if os.path.isfile(f"{d}/.xtboptok"))
+    else:
+        done = sum(1 for d in runs if os.path.isfile(f"{d}/xtb.trj"))
     return len(runs), done
 
 def count_frames(run_dir):
-    log = f"{run_dir}/xtbopt.log"
+    if RUN_MODE == "opt":
+        log = f"{run_dir}/xtbopt.log"
+    else:
+        log = f"{run_dir}/xtb.trj"
     if not os.path.isfile(log):
         return 0
     result = subprocess.run(["grep", "-c", "^\\s*\\d\\+\\s*$", log],
@@ -198,6 +241,8 @@ python3 poll_and_fetch.py --watch  # every 60s
 
 ### Load trajectory in PyMOL
 
+**`--opt` trajectory:**
+
 ```bash
 pymol outputs/my_project/run_h1_saltbridge/xtbopt.log
 ```
@@ -212,10 +257,26 @@ show sticks, traj and not elem H
 color cyan, traj
 ```
 
+**`--md` trajectory:**
+
+```bash
+pymol outputs/my_project/run_h1_saltbridge/xtb.trj
+```
+
+Then in PyMOL:
+```
+load outputs/my_project/run_h1_saltbridge/reference.xyz, ref
+align md_traj, ref
+show sticks, ref and not elem H
+color gray, ref
+show sticks, md_traj and not elem H
+color cyan, md_traj
+```
+
 ### Key insight
 
 `get_job_status` and `read_job_output` are for diagnostics, but the real feedback loop is:
-1. `rsync` pulls `xtbopt.log` trajectories
+1. `rsync` pulls trajectories (`xtbopt.log` for `--opt`, `xtb.trj` for `--md`)
 2. PyMOL visualizes them locally
 3. You decide which hypotheses worked and design the next batch
 
