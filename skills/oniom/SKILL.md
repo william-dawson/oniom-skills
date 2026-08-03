@@ -493,8 +493,6 @@ Hills are deposited during MD in a FIFO buffer. Each new hill is ramped graduall
 
 **ONIOM + dynamic MD metadynamics is compatible** — confirmed on trypsin-BEN (472 atoms, GFN2/GFN-FF) with commit `d17b2ea`. The ONIOM wrapper calls `metadynamic()` on the full-system coordinates.
 
-**Critical caveat:** When using `$fix` (frozen atoms) with `--md`, you **must** add `shake=0` to the `$md` block. Otherwise SHAKE initialization segfaults because fixed atoms break the constraint solver.
-
 **Parameter mapping:** In dynamic mode, `factor` maps to `kpush` and `width` maps to `alpha`. The log printout shows:
 ```
 --- metadynamics parameter ---
@@ -503,14 +501,17 @@ Hills are deposited during MD in a FIFO buffer. Each new hill is ramped graduall
  update :     50     (from save)
 ```
 
-**Wall / confinement for MD:** Without `$fix`, the truncated system may drift. Add a `$wall` logfermi sphere centered on the ligand to confine the inner region:
+**No `$fix` during MD:** xTB explicitly disables `$fix` for MD runs (`src/prog/main.F90:1142` resets `fixset%n = 0` before calling the MD driver). Do not use `$fix` with `--md` — the shell atoms will move and the trajectory is invalid.
+
+**Use `$wall` confinement instead:** To keep the truncated system from drifting, add a logfermi sphere centered on the ligand (or binding site):
 ```
 $wall
 potential=logfermi
-sphere: 12.0, all   # adjust radius to cover inner region
+sphere: 15.0, all   # adjust radius to cover inner region + buffer
 temp=1000
 $end
 ```
+The `$wall` interacts with ALL atoms and applies a counter-force at the boundary, which is stable during dynamics. If shell atoms still drift too much, increase the sphere radius or use the full system without truncation.
 
 | Strategy | Mode | Controls | Use case | Trajectory length |
 |----------|------|----------|----------|-------------------|
@@ -685,8 +686,10 @@ $end
 **For `--md` (dynamic metadynamics — preferred for trajectory length):**
 
 ```
-$fix
-atoms: {freeze_atoms}
+$wall
+potential=logfermi
+sphere: 15.0, all   # adjust radius to cover inner region + buffer
+temp=1000
 $end
 
 $metadyn
@@ -700,11 +703,10 @@ temp=300
 time=100.0
 step=1.0
 dump=100.0
-shake=0
 $end
 ```
 
-> **Why `shake=0`?** Fixed atoms break the SHAKE constraint solver. Disabling SHAKE lets the inner region move freely while the shell stays frozen.
+> **No `$fix` for `--md`:** xTB disables `$fix` during MD (`main.F90:1142` resets `fixset%n = 0`). Use `$wall` instead to prevent the truncated shell from drifting.
 >
 > **Time and dump:** `time=100.0` = 100 ps, `dump=100.0` = 100 fs snapshot interval → ~1,000 frames. Scale `time` up to 1,000 ps (1 ns) for thorough exploration. `dump` should be 50–100 fs to keep file sizes reasonable.
 >
@@ -1135,7 +1137,7 @@ export OMP_NUM_THREADS=2
 - **Link atoms**: XTB places link atoms at cut bonds automatically. **Only cut single bonds.** Use `xtb ... --cut` to verify before running.
 - **xcontrol autoload**: xTB never autoloads `xcontrol`. `--input` is mandatory.
 - **Whitespace sensitivity**: Keywords in `$fix`, `$constrain`, and `$metadyn` must start at column 1. Leading spaces silently fail.
-- **SHAKE + frozen atoms**: If using `$fix` with `--md`, set `shake=0` in the `$md` block. SHAKE initialization segfaults when fixed atoms are present.
+- **`$fix` is ignored during `--md`:** xTB resets `fixset%n = 0` before calling the MD driver (`src/prog/main.F90:1142`). `$fix` atoms will move freely. Use `$wall` confinement instead.
 - **Colon syntax**: Never use `--chrg inner:total` — it may trigger the argument parser's help screen.
 
 
