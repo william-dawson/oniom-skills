@@ -115,7 +115,7 @@ XTB places link atoms at cut bonds automatically. **Only cut single bonds.** Use
 Upstream xTB main does **not** yet apply `$fix`/`$constrain` at the ONIOM wrapper level. Use this fork:
 
 - **Fork**: `https://github.com/william-dawson/xtb`  (branch `main`)
-- **Commit**: `a3d1be7` — "Apply constraints and fixed atoms at the ONIOM wrapper level"
+- **Commit**: `d17b2ea` — "Apply constraints and fixed atoms at the ONIOM wrapper level"
 - **Build** (CMake):
   ```bash
   mkdir build && cd build
@@ -909,12 +909,12 @@ Upstream xtb main does **not** correctly apply `$fix`/`$constrain` and metadynam
 Use this fork:
 
 - **Fork**: `https://github.com/william-dawson/xtb` (branch `main`)
-- **Commit**: `a3d1be7` — "Apply constraints and fixed atoms at the ONIOM wrapper level"
+- **Commit**: `d17b2ea` — "Apply constraints and fixed atoms at the ONIOM wrapper level"
 - **Build** (CMake):
   ```bash
   git clone https://github.com/william-dawson/xtb.git
   cd xtb
-  git checkout a3d1be7
+  git checkout d17b2ea
   mkdir build && cd build
   cmake .. -DWITH_TBLITE=true
   cmake --build . -j$(nproc)
