@@ -501,17 +501,9 @@ Hills are deposited during MD in a FIFO buffer. Each new hill is ramped graduall
  update :     50     (from save)
 ```
 
-**No `$fix` during MD:** xTB explicitly disables `$fix` for MD runs (`src/prog/main.F90:1142` resets `fixset%n = 0` before calling the MD driver). Do not use `$fix` with `--md` — the shell atoms will move and the trajectory is invalid.
+**`$fix` during MD requires a source patch:** Standard xTB disables `$fix` for MD (`main.F90:1142` resets `fixset%n = 0`). The ONIOM fork patch changes this to `if (.not. set%oniom_active) fixset%n = 0`, allowing fixed atoms during ONIOM-MD. 
 
-**Use `$wall` confinement instead:** To keep the truncated system from drifting, add a logfermi sphere centered on the ligand (or binding site):
-```
-$wall
-potential=logfermi
-sphere: 15.0, all   # adjust radius to cover inner region + buffer
-temp=1000
-$end
-```
-The `$wall` interacts with ALL atoms and applies a counter-force at the boundary, which is stable during dynamics. If shell atoms still drift too much, increase the sphere radius or use the full system without truncation.
+**`shake=0` is mandatory with `$fix` + `--md`:** SHAKE (bond constraints) and fixed atoms fight each other. Without `shake=0`, constrained bonds involving frozen atoms become unstable. The `$md` block must include `shake=0`.
 
 | Strategy | Mode | Controls | Use case | Trajectory length |
 |----------|------|----------|----------|-------------------|
@@ -686,10 +678,8 @@ $end
 **For `--md` (dynamic metadynamics — preferred for trajectory length):**
 
 ```
-$wall
-potential=logfermi
-sphere: 15.0, all   # adjust radius to cover inner region + buffer
-temp=1000
+$fix
+atoms: {freeze_atoms}
 $end
 
 $metadyn
@@ -703,10 +693,13 @@ temp=300
 time=100.0
 step=1.0
 dump=100.0
+shake=0
 $end
 ```
 
-> **No `$fix` for `--md`:** xTB disables `$fix` during MD (`main.F90:1142` resets `fixset%n = 0`). Use `$wall` instead to prevent the truncated shell from drifting.
+> **`$fix` + `--md` requires the patched fork:** Standard xTB ignores `$fix` during MD. The fork must include the `main.F90` conditional patch.
+>
+> **Why `shake=0`:** SHAKE bond constraints conflict with fixed atoms. Disabling SHAKE prevents unstable oscillations between the constraint solver and frozen-atom zeroing.
 >
 > **Time and dump:** `time=100.0` = 100 ps, `dump=100.0` = 100 fs snapshot interval → ~1,000 frames. Scale `time` up to 1,000 ps (1 ns) for thorough exploration. `dump` should be 50–100 fs to keep file sizes reasonable.
 >
@@ -1056,6 +1049,24 @@ Use this fork:
 
 This fix moves `constrain_pot`, `constrpot`, `cavity_egrad`, and `metadynamic` calls to the ONIOM wrapper (`src/oniom.f90:~497`) where they operate on the full-system coordinate frame with correct atom indices. Fixed-atom zeroing also happens once at the ONIOM level after all sub-calculations.
 
+### MD Fixed-Atoms Patch (apply on top of commit `d17b2ea`)
+
+Base commit `d17b2ea` preserves fixed atoms for geometry optimization by zeroing gradients in `oniom.f90`, but **xTB's MD driver ignores `$fix` by design** (`src/prog/main.F90:1142` sets `fixset%n = 0` unconditionally for all MD runs). To enable `$fix` during ONIOM-MD, patch `main.F90`:
+
+| File | Line | Original | Patched |
+|------|------|----------|---------|
+| `src/prog/main.F90` | 1142 | `fixset%n = 0 ! no fixing for MD runs` | `if (.not. set%oniom_active) fixset%n = 0 ! no fixing for MD runs` |
+
+Then rebuild and install:
+```bash
+cd builddir && ninja   # or: cmake --build . -j$(nproc)
+cp xtb ~/.local/bin/xtb   # or your install path
+```
+
+Rationale: `dynamic.f90` already has the full fixed-atom machinery (velocity/acceleration zeroing, DOF reduction, re-zeroing after `rmrottr`). It was simply disabled by `main.F90`. The conditional allows ONIOM-MD to use it while leaving standard MD behavior unchanged.
+
+Validation: On a 472-atom trypsin-BEN system with 160 frozen atoms, `grep "deg. of freedom"` shows 936 (= 1416 – 480), confirming 160 fixed atoms. All 160 frozen atoms show exactly 0.000000 Å displacement across the trajectory.
+
 ---
 
 ### Fixed Atoms & Constraints
@@ -1137,7 +1148,7 @@ export OMP_NUM_THREADS=2
 - **Link atoms**: XTB places link atoms at cut bonds automatically. **Only cut single bonds.** Use `xtb ... --cut` to verify before running.
 - **xcontrol autoload**: xTB never autoloads `xcontrol`. `--input` is mandatory.
 - **Whitespace sensitivity**: Keywords in `$fix`, `$constrain`, and `$metadyn` must start at column 1. Leading spaces silently fail.
-- **`$fix` is ignored during `--md`:** xTB resets `fixset%n = 0` before calling the MD driver (`src/prog/main.F90:1142`). `$fix` atoms will move freely. Use `$wall` confinement instead.
+- **`$fix` + `--md` requires the patched fork:** Standard xTB disables `$fix` during MD (`main.F90:1142` resets `fixset%n = 0`). The ONIOM fork patch changes this to `if (.not. set%oniom_active) fixset%n = 0`. With the patched fork, `$fix` works during ONIOM-MD **only if** `shake=0` is set in the `$md` block — SHAKE bond constraints conflict with fixed atoms.
 - **Colon syntax**: Never use `--chrg inner:total` — it may trigger the argument parser's help screen.
 
 
